@@ -1,0 +1,21 @@
+id;title;platform;genre;year;esbr;availability;copies
+1;Elden Ring;PS5;RPG;2022;M;True;5
+2;The Legend of Zelda: Breath of the Wild;Switch;Adventure;2017;E10+;True;3
+3;Grand Theft Auto V;PS4;Action-Adventure;2013;M;False;0
+4;Red Dead Redemption 2;XBOX;Action-Adventure;2018;M;True;2
+5;Minecraft;PC;Sandbox;2011;E10+;True;8
+6;The Witcher 3: Wild Hunt;PC;RPG;2015;M;True;4
+7;Cyberpunk 2077;PS4;RPG;2020;M;True;6
+8;God of War;PS5;Action-Adventure;2022;M;True;2
+9;Marvel's Spider-Man;PS4;Action-Adventure;2018;T;True;7
+10;Horizon Forbidden West;PS5;Action-Adventure;2022;T;True;3
+11;Ghost of Tsushima;PS4;Action-Adventure;2020;M;True;5
+12;Death Stranding;PS4;Action;2019;M;True;4
+13;The Last of Us Part II;PS4;Action-Adventure;2020;M;True;2
+14;Hades;Switch;Roguelike;2020;T;True;8
+15;Stardew Valley;PC;Simulation;2016;E10+;True;10
+16;Hollow Knight;Switch;Metroidvania;2017;E10+;True;6
+17;Celeste;Switch;Platformer;2018;E10+;True;7
+18;Undertale;PC;RPG;2015;T;True;5
+19;Among Us;PC;Social Deduction;2018;E10+;True;12
+20;Fall Guys: Ultimate Knockout;PC;Party;2020;E10+;True;9
