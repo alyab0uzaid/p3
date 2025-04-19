@@ -125,18 +125,25 @@ std::string base64_encode(const unsigned char* data, size_t length) {
     std::cout << "base64_encode: Encoding " << length << " bytes" << std::endl;
     
     BIO* b64 = BIO_new(BIO_f_base64());
+    // Set flags to disable newlines in the output
+    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+    
     BIO* bmem = BIO_new(BIO_s_mem());
     b64 = BIO_push(b64, bmem);
+    
+    // Write the data to be encoded
     BIO_write(b64, data, length);
     BIO_flush(b64);
     
     BUF_MEM* bptr;
     BIO_get_mem_ptr(b64, &bptr);
     
-    std::string result(bptr->data, bptr->length - 1); // -1 to remove newline
+    // Copy to a std::string, ensuring we don't include any trailing null bytes
+    std::string result(bptr->data, bptr->length);
+    
     BIO_free_all(b64);
     
-    std::cout << "base64_encode: Result length: " << result.length() << std::endl;
+    std::cout << "base64_encode: Result length: " << result.length() << " bytes" << std::endl;
     return result;
 }
 
@@ -144,17 +151,26 @@ std::string base64_encode(const unsigned char* data, size_t length) {
 std::vector<unsigned char> base64_decode(const std::string& encoded_data) {
     std::cout << "base64_decode: Decoding string of length " << encoded_data.length() << std::endl;
     
+    // Create BIO for base64 decoding with NO_NL flag to disable newlines
     BIO* b64 = BIO_new(BIO_f_base64());
+    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+    
     BIO* bmem = BIO_new_mem_buf(encoded_data.c_str(), encoded_data.length());
     bmem = BIO_push(b64, bmem);
     
     std::vector<unsigned char> result(encoded_data.length());
     int decoded_size = BIO_read(bmem, result.data(), encoded_data.length());
-    result.resize(decoded_size);
+    
+    if (decoded_size <= 0) {
+        std::cerr << "base64_decode: Failed to decode data" << std::endl;
+        ERR_print_errors_fp(stderr);
+    }
+    
+    result.resize(decoded_size > 0 ? decoded_size : 0);
     
     BIO_free_all(bmem);
     
-    std::cout << "base64_decode: Decoded size: " << decoded_size << std::endl;
+    std::cout << "base64_decode: Decoded size: " << result.size() << " bytes" << std::endl;
     return result;
 }
 
@@ -900,9 +916,16 @@ std::string handleCommand(const std::string &command,
     // Debug print for every command
     std::cout << "Received command: '" << command << "'" << std::endl;
     std::cout << "Auth state: " << (authenticated ? "Authenticated" : "Not Authenticated") << std::endl;
+    std::cout << "Current User: '" << currentUser << "'" << std::endl;
     std::cout << "Modes: " << (browseMode ? "Browse " : "") 
               << (rentMode ? "Rent " : "") 
               << (myGamesMode ? "MyGames" : "") << std::endl;
+
+    // Check for empty command
+    if (command.empty()) {
+        std::cout << "Warning: Empty command received" << std::endl;
+        return "400 BAD REQUEST - Empty command";
+    }
 
     // USER/PASS commands don't require authentication
     if (command.rfind("USER ", 0) == 0) {
@@ -1095,6 +1118,9 @@ std::vector<unsigned char> hash_password(const std::string& password, const std:
 bool load_credentials() {
     std::lock_guard<std::mutex> lock(credentialMutex);
     
+    // Clear existing credentials before loading
+    userCredentials.clear();
+    
     // Get current working directory for absolute path
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) == nullptr) {
@@ -1110,28 +1136,33 @@ bool load_credentials() {
     std::ifstream file(filePath);
     if (!file.is_open()) {
         std::cout << "Credential file not found (this is normal for first run)" << std::endl;
-        // Create an empty file to check write permissions
+        
+        // Create an empty shadow file
         std::ofstream testFile(filePath);
         if (!testFile.is_open()) {
             std::cerr << "WARNING: Cannot create credential file: " << strerror(errno) << std::endl;
             // It's not a fatal error, but we should warn the user
+            return true;
         } else {
             testFile.close();
             std::cout << "Successfully created empty credential file" << std::endl;
-            // Remove the empty file since we don't need it yet
-            if (std::remove(filePath.c_str()) != 0) {
-                std::cerr << "Warning: Failed to remove test file: " << strerror(errno) << std::endl;
-            }
+            return true;
         }
-        return true;
     }
     
     // File exists and is open, read credentials
     std::cout << "Reading existing credentials file" << std::endl;
     std::string line;
     int lineCount = 0;
+    bool readOK = true;
+    
     try {
         while (std::getline(file, line)) {
+            // Skip empty lines
+            if (line.empty()) {
+                continue;
+            }
+            
             lineCount++;
             std::istringstream iss(line);
             std::string username, record;
@@ -1163,30 +1194,39 @@ bool load_credentials() {
                 
                 userCredentials[username] = cred;
                 std::cout << "Loaded credentials for user: " << username << std::endl;
+            } else {
+                std::cerr << "Malformed line in credentials file, line " << lineCount << std::endl;
+                readOK = false;
             }
         }
         
         file.close();
         std::cout << "Successfully loaded " << lineCount << " credential records" << std::endl;
+        
+        // Debug: print all loaded users
+        std::cout << "Currently loaded users: ";
+        for (const auto& [username, _] : userCredentials) {
+            std::cout << username << " ";
+        }
+        std::cout << std::endl;
     }
     catch (const std::exception& e) {
         std::cerr << "Exception during credential loading: " << e.what() << std::endl;
         file.close();
-        return false;
+        readOK = false;
     }
     
-    return true;
+    return readOK;
 }
 
 // Save credentials to file
 bool save_credentials() {
-    // Using low-level file operations instead of C++ streams to avoid potential issues
+    // Using standard C++ file operations for better error handling
     
     // Get current working directory
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) == nullptr) {
         std::cerr << "Failed to get current working directory: " << strerror(errno) << std::endl;
-        perror("getcwd error");
         return false;
     }
     
@@ -1194,11 +1234,18 @@ bool save_credentials() {
     std::string filePath = std::string(cwd) + "/.games_shadow";
     std::cout << "Saving credentials to: " << filePath << std::endl;
     
-    // Open file with C-style IO (more direct debugging)
-    FILE* fp = fopen(filePath.c_str(), "w");
-    if (fp == nullptr) {
-        std::cerr << "Failed to open file for writing: " << strerror(errno) << std::endl;
-        perror("fopen error");
+    // Debug: show users being saved
+    std::cout << "Saving users: ";
+    for (const auto& [username, _] : userCredentials) {
+        std::cout << username << " ";
+    }
+    std::cout << std::endl;
+    
+    // First create a temporary file
+    std::string tempFilePath = filePath + ".tmp";
+    std::ofstream outFile(tempFilePath);
+    if (!outFile.is_open()) {
+        std::cerr << "Failed to open temporary file for writing: " << strerror(errno) << std::endl;
         return false;
     }
     
@@ -1209,30 +1256,29 @@ bool save_credentials() {
         // Write each credential
         for (const auto& [username, cred] : userCredentials) {
             std::string line = username + ":$pbkdf2-sha256$10000$" + cred.salt + "$" + cred.hash + "\n";
+            std::cout << "Writing user: " << username << " (" << line.length() << " bytes)" << std::endl;
             
-            size_t written = fwrite(line.c_str(), 1, line.length(), fp);
-            if (written != line.length()) {
-                std::cerr << "Failed to write complete line: " << strerror(errno) << std::endl;
-                perror("fwrite error");
+            outFile << line;
+            if (!outFile.good()) {
+                std::cerr << "Failed to write user " << username << " to file: " << strerror(errno) << std::endl;
                 success = false;
                 break;
             }
             count++;
         }
         
-        // Force write to disk
-        fflush(fp);
+        // Flush and close the file
+        outFile.flush();
+        outFile.close();
         
-        if (ferror(fp)) {
-            std::cerr << "Error detected during file operations: " << strerror(errno) << std::endl;
-            perror("file error");
-            success = false;
+        if (!outFile) {
+            std::cerr << "Error closing temporary file: " << strerror(errno) << std::endl;
+            return false;
         }
         
-        // Close file
-        if (fclose(fp) != 0) {
-            std::cerr << "Error closing file: " << strerror(errno) << std::endl;
-            perror("fclose error");
+        // Now rename the temporary file to the actual file
+        if (std::rename(tempFilePath.c_str(), filePath.c_str()) != 0) {
+            std::cerr << "Failed to rename temporary file: " << strerror(errno) << std::endl;
             return false;
         }
         
@@ -1244,7 +1290,7 @@ bool save_credentials() {
     }
     catch (const std::exception& e) {
         std::cerr << "Exception during file write: " << e.what() << std::endl;
-        fclose(fp);
+        outFile.close();
         return false;
     }
 }
@@ -1292,13 +1338,17 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
             // Decode the stored salt
             std::cout << "Decoding salt: " << cred.salt << std::endl;
             auto salt_bin = base64_decode(cred.salt);
+            std::cout << "Salt decoded, size: " << salt_bin.size() << " bytes" << std::endl;
             
             // Hash the provided password with the stored salt
-            std::cout << "Hashing password" << std::endl;
+            std::cout << "Hashing password: '" << password << "'" << std::endl;
             auto hash = hash_password(password, salt_bin);
             std::string hash_b64 = base64_encode(hash.data(), hash.size());
             
-            std::cout << "Comparing hashes" << std::endl;
+            std::cout << "Comparing hashes:" << std::endl;
+            std::cout << "  Stored hash: " << cred.hash << std::endl;
+            std::cout << "  Computed hash: " << hash_b64 << std::endl;
+            
             // Compare with stored hash
             if (hash_b64 == cred.hash) {
                 authenticated = true;
@@ -1316,11 +1366,8 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
                 authenticated = false;
                 
                 std::cout << "Authentication failed for user: " << currentUser << std::endl;
-                if (cred.failedAttempts >= 2) {
-                    return "530 FAIL";
-                } else {
-                    return "530 FAIL";
-                }
+                std::cout << "Failed attempts: " << cred.failedAttempts << "/2" << std::endl;
+                return "530 Authentication failed: Invalid password";
             }
         } catch (const std::exception& e) {
             std::cerr << "Exception during authentication: " << e.what() << std::endl;
@@ -1331,18 +1378,28 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
         std::cout << "Registering new user: " << currentUser << std::endl;
         
         try {
+            // Generate random password if none provided
+            std::string userPassword = password;
+            if (userPassword.empty()) {
+                userPassword = generate_password();
+                std::cout << "Generated random password: " << userPassword << std::endl;
+            } else {
+                std::cout << "Using provided password" << std::endl;
+            }
+            
             // Generate salt and hash outside the lock to minimize lock time
             auto salt = generate_salt();
-            std::cout << "Generated salt" << std::endl;
+            std::cout << "Generated salt, size: " << salt.size() << " bytes" << std::endl;
             
-            auto hash = hash_password(password, salt);
-            std::cout << "Generated hash" << std::endl;
+            auto hash = hash_password(userPassword, salt);
+            std::cout << "Generated hash, size: " << hash.size() << " bytes" << std::endl;
             
             // Convert binary salt and hash to base64 for storage
             std::string salt_b64 = base64_encode(salt.data(), salt.size());
             std::string hash_b64 = base64_encode(hash.data(), hash.size());
             
-            std::cout << "Encoded salt and hash" << std::endl;
+            std::cout << "Encoded salt: " << salt_b64 << std::endl;
+            std::cout << "Encoded hash: " << hash_b64 << std::endl;
             
             // Create credential object
             UserCredential cred;
@@ -1353,6 +1410,33 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
             
             // Store in memory and release the lock temporarily
             userCredentials[currentUser] = cred;
+            
+            // Log that we're saving credentials
+            std::cout << "Saving credentials to file" << std::endl;
+            
+            // Save credentials but continue even if it fails
+            bool saveResult = save_credentials();
+            if (!saveResult) {
+                std::cerr << "Failed to save credentials to file, but continuing" << std::endl;
+            } else {
+                std::cout << "Credentials saved successfully" << std::endl;
+            }
+            
+            // Set the user as authenticated and enable browse mode by default
+            authenticated = true;
+            browseMode = true;
+            rentMode = false;
+            myGamesMode = false;
+            
+            // Simple, minimal single-line response that's easier for s_client to display
+            std::cout << "Authentication successful for new user: " << currentUser << std::endl;
+            
+            // If we generated a password, tell the user what it is
+            if (password.empty()) {
+                return "230 New user created. Your password is: " + userPassword;
+            } else {
+                return "230 New user account created successfully";
+            }
         }
         catch (const std::exception& e) {
             std::cerr << "Exception during credential preparation: " << e.what() << std::endl;
@@ -1360,33 +1444,7 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
         }
     }
     
-    // CRITICAL FIX: Simplified registration path - single return point to avoid issues
-    if (it == userCredentials.end()) {  // Only for new users
-        // Log that we're saving credentials
-        std::cout << "Saving credentials to file" << std::endl;
-        
-        // Save credentials but continue even if it fails
-        bool saveResult = save_credentials();
-        if (!saveResult) {
-            std::cerr << "Failed to save credentials to file, but continuing" << std::endl;
-        } else {
-            std::cout << "Credentials saved successfully" << std::endl;
-        }
-        
-        // Set the user as authenticated and enable browse mode by default
-        authenticated = true;
-        browseMode = true;
-        rentMode = false;
-        myGamesMode = false;
-        
-        // Simple, minimal single-line response that's easier for s_client to display
-        std::cout << "Authentication successful for new user: " << currentUser << std::endl;
-        return "230 OK";
-        // Note: We're using a minimal response that s_client can definitely display
-    }
-    
-    // If login was successful but we did not return explicitly above, 
-    // ensure we return a valid response anyway
+    // This should never be reached, but just in case
     std::cout << "WARNING: Reached end of handlePass function without early return" << std::endl;
     if (authenticated) {
         return "230 User login successful";
@@ -1546,8 +1604,17 @@ int main(int argc, char* argv[]) {
                 while (true) {
                     numbytes = ssl_conn.read(buf.data(), MAXDATASIZE - 1);
                     if (numbytes <= 0) {
+                        int ssl_error = SSL_get_error(ssl_conn.ssl, numbytes);
                         if (numbytes < 0) {
-                            std::cerr << "SSL read error" << std::endl;
+                            std::cerr << "SSL read error: " << ssl_error << std::endl;
+                            ERR_print_errors_fp(stderr);
+                            
+                            // Check for specific errors
+                            if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+                                std::cerr << "SSL operation would block, retrying..." << std::endl;
+                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                                continue;  // Try again
+                            }
                         }
                         logEvent("Client disconnected: " + clientAddress);
                         break;
@@ -1583,46 +1650,43 @@ int main(int argc, char* argv[]) {
                     std::cout << response << std::endl;
                     std::cout << "---END RESPONSE---" << std::endl;
                     
-                    // Print response content for debugging
-                    std::cout << "Attempting to send response to client:" << std::endl;
-                    std::cout << "===== RESPONSE START =====" << std::endl;
-                    for (char c : response) {
-                        if (c == '\r') std::cout << "<CR>";
-                        else if (c == '\n') std::cout << "<LF>\n";
-                        else std::cout << c;
-                    }
-                    std::cout << std::endl << "===== RESPONSE END =====" << std::endl;
-                    
-                    // CRITICAL FIX FOR OPENSSL S_CLIENT COMPATIBILITY
-                    // Format response for s_client with exact spacing and newlines
-                    
-                    // EMERGENCY FIX: Ultra-simplified response handling
-                    // Just add a single CRLF - openssl s_client needs simple formatting
+                    // Simple response format with just a CRLF trailer
                     std::string minimal_response = response + "\r\n";
                     
                     // Log what we're sending
-                    std::cout << "Sending minimal response (length: " << minimal_response.length() << "): \"" 
+                    std::cout << "Sending response (length: " << minimal_response.length() << "): \"" 
                               << response << "\\r\\n\"" << std::endl;
                     
                     // Direct SSL_write with minimal formatting
                     int direct_result = SSL_write(ssl_conn.ssl, minimal_response.c_str(), minimal_response.length());
                     
                     if (direct_result <= 0) {
-                        std::cerr << "Direct SSL_write failed, falling back to normal method" << std::endl;
-                        // Fall back to normal method if direct write fails
-                        int write_result = ssl_conn.write_multiline_response(response);
+                        int ssl_error = SSL_get_error(ssl_conn.ssl, direct_result);
+                        std::cerr << "SSL write error: " << ssl_error << std::endl;
+                        ERR_print_errors_fp(stderr);
                         
-                        if (write_result <= 0) {
-                            std::cerr << "SSL write error: " << SSL_get_error(ssl_conn.ssl, write_result) << std::endl;
-                            ERR_print_errors_fp(stderr);
+                        // Check if it's a temporary error we should retry
+                        if (ssl_error == SSL_ERROR_WANT_WRITE || ssl_error == SSL_ERROR_WANT_READ) {
+                            std::cerr << "SSL operation would block, retrying write..." << std::endl;
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            // Retry a few times
+                            for (int retry = 0; retry < 3; retry++) {
+                                direct_result = SSL_write(ssl_conn.ssl, minimal_response.c_str(), minimal_response.length());
+                                if (direct_result > 0) break;
+                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            }
+                            
+                            if (direct_result <= 0) {
+                                std::cerr << "SSL write failed after retries" << std::endl;
+                                break;
+                            }
+                        } else {
+                            // Serious error, terminate connection
                             break;
                         }
-                    } else {
-                        std::cout << "Direct SSL_write succeeded, sent " << direct_result << " bytes" << std::endl;
                     }
                     
-                    // No need to reference write_result since we already logged it above
-                    std::cout << "Response transmission completed" << std::endl;
+                    std::cout << "Successfully sent " << direct_result << " bytes" << std::endl;
                     
                     if (response.rfind("200 BYE", 0) == 0) {
                         logEvent("Client disconnected: " + clientAddress);
