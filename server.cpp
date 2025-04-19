@@ -119,6 +119,8 @@ void cleanup_openssl() {
 
 // Base64 encoding function
 std::string base64_encode(const unsigned char* data, size_t length) {
+    std::cout << "base64_encode: Encoding " << length << " bytes" << std::endl;
+    
     BIO* b64 = BIO_new(BIO_f_base64());
     BIO* bmem = BIO_new(BIO_s_mem());
     b64 = BIO_push(b64, bmem);
@@ -131,11 +133,14 @@ std::string base64_encode(const unsigned char* data, size_t length) {
     std::string result(bptr->data, bptr->length - 1); // -1 to remove newline
     BIO_free_all(b64);
     
+    std::cout << "base64_encode: Result length: " << result.length() << std::endl;
     return result;
 }
 
 // Base64 decoding function
 std::vector<unsigned char> base64_decode(const std::string& encoded_data) {
+    std::cout << "base64_decode: Decoding string of length " << encoded_data.length() << std::endl;
+    
     BIO* b64 = BIO_new(BIO_f_base64());
     BIO* bmem = BIO_new_mem_buf(encoded_data.c_str(), encoded_data.length());
     bmem = BIO_push(b64, bmem);
@@ -145,6 +150,8 @@ std::vector<unsigned char> base64_decode(const std::string& encoded_data) {
     result.resize(decoded_size);
     
     BIO_free_all(bmem);
+    
+    std::cout << "base64_decode: Decoded size: " << decoded_size << std::endl;
     return result;
 }
 
@@ -191,6 +198,58 @@ struct SSLConnection {
     // Write data to SSL connection
     int write(const void* buf, int num) {
         return SSL_write(ssl, buf, num);
+    }
+    
+    // Write a string response with proper line ending
+    int write_response(const std::string& response) {
+        std::string full_response = response + "\r\n";
+        std::cout << "Sending response: " << response << std::endl;
+        int result = SSL_write(ssl, full_response.c_str(), full_response.length());
+        return result;
+    }
+
+    // Write a response in a format compatible with OpenSSL s_client
+    int write_multiline_response(const std::string& response) {
+        // Format with explicit newlines and extra padding to force display
+        std::string formatted_response = response;
+        
+        // Replace all \n with explicit \r\n
+        size_t pos = 0;
+        while ((pos = formatted_response.find('\n', pos)) != std::string::npos) {
+            formatted_response.replace(pos, 1, "\r\n");
+            pos += 2;
+        }
+        
+        // Add multiple terminators to ensure proper display in openssl s_client
+        formatted_response += "\r\n.\r\n";
+        
+        std::cout << "Sending response with length " << formatted_response.length() << std::endl;
+        
+        // Send response in smaller chunks to prevent buffering issues
+        const int CHUNK_SIZE = 512;
+        const char* data = formatted_response.c_str();
+        int remaining = formatted_response.length();
+        int total_sent = 0;
+        
+        while (remaining > 0) {
+            int to_send = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
+            int sent = SSL_write(ssl, data + total_sent, to_send);
+            
+            if (sent <= 0) {
+                int err = SSL_get_error(ssl, sent);
+                std::cerr << "SSL write error: " << err << std::endl;
+                ERR_print_errors_fp(stderr);
+                return sent;
+            }
+            
+            total_sent += sent;
+            remaining -= sent;
+            
+            // Small delay between chunks
+            usleep(10000); // 10ms
+        }
+        
+        return total_sent;
     }
 };
 
@@ -1066,65 +1125,94 @@ std::string handleUser(const std::string &username, bool &authenticated, std::st
 std::string handlePass(const std::string &password, bool &authenticated, std::string &currentUser) {
     std::lock_guard<std::mutex> lock(credentialMutex);
     
+    std::cout << "Processing PASS command for user: " << currentUser << std::endl;
+    
     // Check if user exists
     auto it = userCredentials.find(currentUser);
     if (it != userCredentials.end()) {
         // User exists, authenticate
+        std::cout << "Existing user found, performing authentication" << std::endl;
         UserCredential &cred = it->second;
         
         // Check for too many failed attempts
         if (cred.failedAttempts >= 2) {
+            std::cout << "Too many failed attempts for user: " << currentUser << std::endl;
             return "530 Authentication failed: too many invalid attempts.";
         }
         
-        // Decode the stored salt
-        auto salt_bin = base64_decode(cred.salt);
-        
-        // Hash the provided password with the stored salt
-        auto hash = hash_password(password, salt_bin);
-        std::string hash_b64 = base64_encode(hash.data(), hash.size());
-        
-        // Compare with stored hash
-        if (hash_b64 == cred.hash) {
-            authenticated = true;
-            cred.failedAttempts = 0;
-            return "230 User authenticated, access granted.";
-        } else {
-            // Failed authentication
-            cred.failedAttempts++;
-            authenticated = false;
+        try {
+            // Decode the stored salt
+            std::cout << "Decoding salt: " << cred.salt << std::endl;
+            auto salt_bin = base64_decode(cred.salt);
             
-            if (cred.failedAttempts >= 2) {
-                return "530 Authentication failed: too many invalid attempts.";
+            // Hash the provided password with the stored salt
+            std::cout << "Hashing password" << std::endl;
+            auto hash = hash_password(password, salt_bin);
+            std::string hash_b64 = base64_encode(hash.data(), hash.size());
+            
+            std::cout << "Comparing hashes" << std::endl;
+            // Compare with stored hash
+            if (hash_b64 == cred.hash) {
+                authenticated = true;
+                cred.failedAttempts = 0;
+                std::cout << "Authentication successful for user: " << currentUser << std::endl;
+                return "230 User authenticated, access granted.";
             } else {
-                return "530 Authentication failed: invalid password.";
+                // Failed authentication
+                cred.failedAttempts++;
+                authenticated = false;
+                
+                std::cout << "Authentication failed for user: " << currentUser << std::endl;
+                if (cred.failedAttempts >= 2) {
+                    return "530 Authentication failed: too many invalid attempts.";
+                } else {
+                    return "530 Authentication failed: invalid password.";
+                }
             }
+        } catch (const std::exception& e) {
+            std::cerr << "Exception during authentication: " << e.what() << std::endl;
+            return "500 INTERNAL SERVER ERROR - Exception during authentication";
         }
     } else {
         // Register new user
-        auto salt = generate_salt();
-        auto hash = hash_password(password, salt);
+        std::cout << "Registering new user: " << currentUser << std::endl;
         
-        // Convert binary salt and hash to base64 for storage
-        std::string salt_b64 = base64_encode(salt.data(), salt.size());
-        std::string hash_b64 = base64_encode(hash.data(), hash.size());
-        
-        // Store new credentials
-        UserCredential cred;
-        cred.username = currentUser;
-        cred.salt = salt_b64;
-        cred.hash = hash_b64;
-        cred.failedAttempts = 0;
-        
-        userCredentials[currentUser] = cred;
-        
-        // Save to file
-        if (!save_credentials()) {
-            return "500 INTERNAL SERVER ERROR - Failed to save credentials";
+        try {
+            auto salt = generate_salt();
+            std::cout << "Generated salt" << std::endl;
+            
+            auto hash = hash_password(password, salt);
+            std::cout << "Generated hash" << std::endl;
+            
+            // Convert binary salt and hash to base64 for storage
+            std::string salt_b64 = base64_encode(salt.data(), salt.size());
+            std::string hash_b64 = base64_encode(hash.data(), hash.size());
+            
+            std::cout << "Encoded salt and hash" << std::endl;
+            
+            // Store new credentials
+            UserCredential cred;
+            cred.username = currentUser;
+            cred.salt = salt_b64;
+            cred.hash = hash_b64;
+            cred.failedAttempts = 0;
+            
+            userCredentials[currentUser] = cred;
+            
+            // Save to file
+            std::cout << "Saving credentials to file" << std::endl;
+            if (!save_credentials()) {
+                std::cerr << "Failed to save credentials to file" << std::endl;
+                return "500 INTERNAL SERVER ERROR - Failed to save credentials";
+            }
+            
+            authenticated = true;
+            std::cout << "User registered successfully: " << currentUser << std::endl;
+            return "230 New user registered: " + currentUser;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception during registration: " << e.what() << std::endl;
+            return "500 INTERNAL SERVER ERROR - Exception during registration";
         }
-        
-        authenticated = true;
-        return "230 New user registered: " + currentUser;
     }
 }
 
@@ -1296,10 +1384,21 @@ int main(int argc, char* argv[]) {
                         games, currentUser
                     );
                     
-                    if (ssl_conn.write(response.c_str(), response.size()) <= 0) {
+                    // Debug output
+                    std::cout << "Response to send (length: " << response.length() << " bytes): " << std::endl;
+                    std::cout << "---BEGIN RESPONSE---" << std::endl;
+                    std::cout << response << std::endl;
+                    std::cout << "---END RESPONSE---" << std::endl;
+                    
+                    // Write the response to client
+                    int write_result = ssl_conn.write_multiline_response(response);
+                    
+                    if (write_result <= 0) {
                         std::cerr << "SSL write error" << std::endl;
                         break;
                     }
+                    
+                    std::cout << "Sent " << write_result << " bytes to client" << std::endl;
                     
                     if (response.rfind("200 BYE", 0) == 0) {
                         logEvent("Client disconnected: " + clientAddress);
