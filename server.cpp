@@ -1121,117 +1121,108 @@ bool load_credentials() {
     // Clear existing credentials before loading
     userCredentials.clear();
     
-    // Get current working directory for absolute path
-    char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof(cwd)) == nullptr) {
-        std::cerr << "Failed to get current working directory: " << strerror(errno) << std::endl;
+    // Get full path for .games_shadow
+    std::string filePath = "./.games_shadow";  // Use relative path for simplicity
+    std::cout << "Looking for credential file at: " << filePath << std::endl;
+    
+    // Check if file exists
+    if (!std::filesystem::exists(filePath)) {
+        std::cout << "Credential file not found, creating new empty file" << std::endl;
+        
+        // Create an empty shadow file
+        std::ofstream newFile(filePath);
+        if (!newFile.is_open()) {
+            std::cerr << "ERROR: Cannot create credential file: " << strerror(errno) << std::endl;
+            return false;
+        }
+        newFile.close();
+        std::cout << "Created empty credential file" << std::endl;
+        return true;
+    }
+    
+    // File exists, try to open it
+    std::cout << "Found credential file, loading..." << std::endl;
+    std::ifstream file(filePath);
+    if (!file.is_open()) {
+        std::cerr << "ERROR: Cannot open credential file for reading: " << strerror(errno) << std::endl;
         return false;
     }
     
-    // Create absolute path for shadow file
-    std::string filePath = std::string(cwd) + "/.games_shadow";
-    std::cout << "Looking for credential file at: " << filePath << std::endl;
-    
-    // Check if file exists and attempt to open it
-    std::ifstream file(filePath);
-    if (!file.is_open()) {
-        std::cout << "Credential file not found (this is normal for first run)" << std::endl;
-        
-        // Create an empty shadow file
-        std::ofstream testFile(filePath);
-        if (!testFile.is_open()) {
-            std::cerr << "WARNING: Cannot create credential file: " << strerror(errno) << std::endl;
-            // It's not a fatal error, but we should warn the user
-            return true;
-        } else {
-            testFile.close();
-            std::cout << "Successfully created empty credential file" << std::endl;
-            return true;
-        }
-    }
-    
-    // File exists and is open, read credentials
-    std::cout << "Reading existing credentials file" << std::endl;
+    // Successfully opened, read line by line
     std::string line;
     int lineCount = 0;
-    bool readOK = true;
+    int successCount = 0;
     
-    try {
-        while (std::getline(file, line)) {
-            // Skip empty lines
-            if (line.empty()) {
+    while (std::getline(file, line)) {
+        // Skip empty lines
+        if (line.empty()) {
+            std::cout << "Skipping empty line" << std::endl;
+            continue;
+        }
+        
+        lineCount++;
+        std::cout << "Processing line " << lineCount << ": " << line << std::endl;
+        
+        // Split into username and credential data
+        std::istringstream iss(line);
+        std::string username, record;
+        
+        if (std::getline(iss, username, ':') && std::getline(iss, record)) {
+            // Parse: $pbkdf2-sha256$work_factor$salt_base64$hash_base64
+            if (record.substr(0, 14) != "$pbkdf2-sha256$") {
+                std::cerr << "Invalid credential format for user: " << username << std::endl;
                 continue;
             }
             
-            lineCount++;
-            std::istringstream iss(line);
-            std::string username, record;
+            size_t pos1 = record.find('$', 14);
+            size_t pos2 = record.find('$', pos1 + 1);
             
-            if (std::getline(iss, username, ':') && std::getline(iss, record)) {
-                // Parse: $pbkdf2-sha256$work_factor$salt_base64$hash_base64
-                if (record.substr(0, 14) != "$pbkdf2-sha256$") {
-                    std::cerr << "Invalid credential record for user: " << username << std::endl;
-                    continue;
-                }
-                
-                size_t pos1 = record.find('$', 14);
-                size_t pos2 = record.find('$', pos1 + 1);
-                
-                if (pos1 == std::string::npos || pos2 == std::string::npos) {
-                    std::cerr << "Invalid credential format for user: " << username << std::endl;
-                    continue;
-                }
-                
-                std::string work_factor = record.substr(14, pos1 - 14);
-                std::string salt_base64 = record.substr(pos1 + 1, pos2 - pos1 - 1);
-                std::string hash_base64 = record.substr(pos2 + 1);
-                
-                UserCredential cred;
-                cred.username = username;
-                cred.salt = salt_base64;
-                cred.hash = hash_base64;
-                cred.failedAttempts = 0;
-                
-                userCredentials[username] = cred;
-                std::cout << "Loaded credentials for user: " << username << std::endl;
-            } else {
-                std::cerr << "Malformed line in credentials file, line " << lineCount << std::endl;
-                readOK = false;
+            if (pos1 == std::string::npos || pos2 == std::string::npos) {
+                std::cerr << "Invalid credential format for user: " << username << std::endl;
+                continue;
             }
+            
+            std::string work_factor = record.substr(14, pos1 - 14);
+            std::string salt_base64 = record.substr(pos1 + 1, pos2 - pos1 - 1);
+            std::string hash_base64 = record.substr(pos2 + 1);
+            
+            std::cout << "  Username: " << username << std::endl;
+            std::cout << "  Work Factor: " << work_factor << std::endl;
+            std::cout << "  Salt (Base64): " << salt_base64 << std::endl;
+            std::cout << "  Hash (Base64): " << hash_base64 << std::endl;
+            
+            UserCredential cred;
+            cred.username = username;
+            cred.salt = salt_base64;
+            cred.hash = hash_base64;
+            cred.failedAttempts = 0;
+            
+            userCredentials[username] = cred;
+            std::cout << "Successfully loaded user: " << username << std::endl;
+            successCount++;
+        } else {
+            std::cerr << "Malformed line in credentials file, line " << lineCount << std::endl;
         }
-        
-        file.close();
-        std::cout << "Successfully loaded " << lineCount << " credential records" << std::endl;
-        
-        // Debug: print all loaded users
-        std::cout << "Currently loaded users: ";
-        for (const auto& [username, _] : userCredentials) {
-            std::cout << username << " ";
-        }
-        std::cout << std::endl;
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Exception during credential loading: " << e.what() << std::endl;
-        file.close();
-        readOK = false;
     }
     
-    return readOK;
+    file.close();
+    std::cout << "Credential loading complete. Loaded " << successCount << " out of " << lineCount << " entries." << std::endl;
+    
+    // Debug: print all loaded users
+    std::cout << "Currently loaded users: ";
+    for (const auto& [username, _] : userCredentials) {
+        std::cout << username << " ";
+    }
+    std::cout << std::endl;
+    
+    return true;
 }
 
 // Save credentials to file
 bool save_credentials() {
-    // Using standard C++ file operations for better error handling
+    // Use a simpler, more direct approach with C++ streams
     
-    // Get current working directory
-    char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof(cwd)) == nullptr) {
-        std::cerr << "Failed to get current working directory: " << strerror(errno) << std::endl;
-        return false;
-    }
-    
-    // Build the file path
-    std::string filePath = std::string(cwd) + "/.games_shadow";
+    std::string filePath = "./.games_shadow";  // Use relative path for simplicity
     std::cout << "Saving credentials to: " << filePath << std::endl;
     
     // Debug: show users being saved
@@ -1243,56 +1234,49 @@ bool save_credentials() {
     
     // First create a temporary file
     std::string tempFilePath = filePath + ".tmp";
+    
+    // Open output file
     std::ofstream outFile(tempFilePath);
     if (!outFile.is_open()) {
-        std::cerr << "Failed to open temporary file for writing: " << strerror(errno) << std::endl;
+        std::cerr << "ERROR: Failed to open temporary file for writing: " << strerror(errno) << std::endl;
         return false;
     }
     
-    bool success = true;
     int count = 0;
     
-    try {
-        // Write each credential
-        for (const auto& [username, cred] : userCredentials) {
-            std::string line = username + ":$pbkdf2-sha256$10000$" + cred.salt + "$" + cred.hash + "\n";
-            std::cout << "Writing user: " << username << " (" << line.length() << " bytes)" << std::endl;
-            
-            outFile << line;
-            if (!outFile.good()) {
-                std::cerr << "Failed to write user " << username << " to file: " << strerror(errno) << std::endl;
-                success = false;
-                break;
-            }
-            count++;
-        }
+    // Write each credential
+    for (const auto& [username, cred] : userCredentials) {
+        std::string line = username + ":$pbkdf2-sha256$10000$" + cred.salt + "$" + cred.hash + "\n";
+        std::cout << "Writing user: " << username << std::endl;
         
-        // Flush and close the file
-        outFile.flush();
-        outFile.close();
-        
-        if (!outFile) {
-            std::cerr << "Error closing temporary file: " << strerror(errno) << std::endl;
+        outFile << line;
+        if (!outFile.good()) {
+            std::cerr << "ERROR: Failed to write user " << username << " to file: " << strerror(errno) << std::endl;
+            outFile.close();
             return false;
         }
-        
-        // Now rename the temporary file to the actual file
-        if (std::rename(tempFilePath.c_str(), filePath.c_str()) != 0) {
-            std::cerr << "Failed to rename temporary file: " << strerror(errno) << std::endl;
-            return false;
-        }
-        
-        if (success) {
-            std::cout << "Successfully saved " << count << " credential records" << std::endl;
-        }
-        
-        return success;
+        count++;
     }
-    catch (const std::exception& e) {
-        std::cerr << "Exception during file write: " << e.what() << std::endl;
-        outFile.close();
+    
+    // Flush and close the file
+    outFile.flush();
+    outFile.close();
+    
+    if (!outFile) {
+        std::cerr << "ERROR: Problem closing temporary file: " << strerror(errno) << std::endl;
         return false;
     }
+    
+    // Rename temporary file to the actual file (atomic operation)
+    std::error_code ec;
+    std::filesystem::rename(tempFilePath, filePath, ec);
+    if (ec) {
+        std::cerr << "ERROR: Failed to rename temporary file: " << ec.message() << std::endl;
+        return false;
+    }
+    
+    std::cout << "Successfully saved " << count << " credential records" << std::endl;
+    return true;
 }
 
 // Handle USER command - this checks if the user exists or starts registration
