@@ -37,6 +37,9 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/bio.h>
 
 #define BACKLOG 10
 #define MAXDATASIZE 100
@@ -114,6 +117,37 @@ void cleanup_openssl() {
     ERR_free_strings();
 }
 
+// Base64 encoding function
+std::string base64_encode(const unsigned char* data, size_t length) {
+    BIO* b64 = BIO_new(BIO_f_base64());
+    BIO* bmem = BIO_new(BIO_s_mem());
+    b64 = BIO_push(b64, bmem);
+    BIO_write(b64, data, length);
+    BIO_flush(b64);
+    
+    BUF_MEM* bptr;
+    BIO_get_mem_ptr(b64, &bptr);
+    
+    std::string result(bptr->data, bptr->length - 1); // -1 to remove newline
+    BIO_free_all(b64);
+    
+    return result;
+}
+
+// Base64 decoding function
+std::vector<unsigned char> base64_decode(const std::string& encoded_data) {
+    BIO* b64 = BIO_new(BIO_f_base64());
+    BIO* bmem = BIO_new_mem_buf(encoded_data.c_str(), encoded_data.length());
+    bmem = BIO_push(b64, bmem);
+    
+    std::vector<unsigned char> result(encoded_data.length());
+    int decoded_size = BIO_read(bmem, result.data(), encoded_data.length());
+    result.resize(decoded_size);
+    
+    BIO_free_all(bmem);
+    return result;
+}
+
 // Wrapper for SSL connection
 struct SSLConnection {
     SSL* ssl;
@@ -181,6 +215,17 @@ static std::unordered_map<int, RatingData> globalRatings;
 static std::unordered_map<std::string, std::unordered_map<int,int>> userRatings;
 static std::mutex ratingMutex;
 
+// Structure to store user credentials
+struct UserCredential {
+    std::string username;
+    std::string salt;       // Base64 encoded
+    std::string hash;       // Base64 encoded
+    int failedAttempts;     // Count of consecutive failed login attempts
+};
+
+// Global map to store credentials in memory
+static std::unordered_map<std::string, UserCredential> userCredentials;
+static std::mutex credentialMutex;
 
 struct Game {
     int id;
@@ -294,7 +339,8 @@ std::string handleHelp(bool browseMode, bool rentMode, bool myGamesMode) {
     out << "200 HELP\n";
     out << "-------------------------------------------\n";
     if (!browseMode && !rentMode && !myGamesMode) {
-        out << "HELO <hostname>\n";
+        out << "USER <username>\n";
+        out << "PASS <password>\n";
         out << "HELP\n";
         out << "BROWSE\n";
         out << "RENT\n";
@@ -326,12 +372,12 @@ std::string handleHelp(bool browseMode, bool rentMode, bool myGamesMode) {
         out << "[RENT MODE COMMANDS]\n";
         out << "CHECKOUT <game_id>\n";
         out << "RETURN <game_id>\n";
-        out << "MYGAMES\n";
         out << "BROWSE\n";
+        out << "MYGAMES\n";
         out << "HELP\n";
         out << "BYE\n";
     }
-    else {
+    else if (myGamesMode) {
         out << "[MYGAMES MODE COMMANDS]\n";
         out << "HISTORY\n";
         out << "RECOMMEND [platform|genre]\n";
@@ -695,8 +741,6 @@ std::string handleRecommend(const std::string &clientAddr,
     return out.str();
 }
 
-
-
 //RATE
 std::string handleRate(const std::string &clientAddr, int gameId, int ratingVal,
                        const std::vector<Game> &games) {
@@ -734,33 +778,33 @@ std::string handleRate(const std::string &clientAddr, int gameId, int ratingVal,
     return out.str();
 }
 
+// Forward declarations for authentication functions
+std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser);
+std::string handlePass(const std::string &password, bool &authenticated, std::string &currentUser);
+
 // handleCommand
 std::string handleCommand(const std::string &command,
                           const std::string &clientAddr,
-                          bool &heloSetup,
+                          bool &authenticated,
                           bool &browseMode,
                           bool &rentMode,
                           bool &myGamesMode,
-                          std::vector<Game> &games) {
+                          std::vector<Game> &games,
+                          std::string &currentUser) {
 
-    // HELO must be sent first before any other command
-    if (!heloSetup && command.rfind("HELO ", 0) != 0) {
-        return "403 FORBIDDEN - HELO must be sent first.";
+    // USER/PASS commands don't require authentication
+    if (command.rfind("USER ", 0) == 0) {
+        return handleUser(command.substr(5), authenticated, currentUser);
+    } 
+    else if (command.rfind("PASS ", 0) == 0) {
+        return handlePass(command.substr(5), authenticated, currentUser);
     }
-    //HELO
-    if (command.rfind("HELO ", 0) == 0) {
-        std::string instance = command.substr(5);
-        char hostname[1024];
-        if (gethostname(hostname, sizeof(hostname)) != 0) {
-            return "500 INTERNAL SERVER ERROR - Could not retrieve hostname";
-        }
-        if (instance == hostname) {
-            heloSetup = true;
-            return "200 HELO " + clientAddr + " (TCP)";
-        } else {
-            return "403 FORBIDDEN - Wrong server instance";
-        }
+    
+    // All other commands require authentication
+    if (!authenticated) {
+        return "530 Not authenticated. Please login first with USER and PASS.";
     }
+    
     //HELP
     if (command == "HELP") {
         return handleHelp(browseMode, rentMode, myGamesMode);
@@ -819,7 +863,7 @@ std::string handleCommand(const std::string &command,
             std::string c;
             int gID;
             ss >> c >> gID;
-            return handleCheckout(clientAddr, gID, games);
+            return handleCheckout(currentUser, gID, games);  // Use currentUser instead of clientAddr
         }
         else if (command.rfind("RETURN ", 0) == 0) {
             //RETURN
@@ -827,14 +871,14 @@ std::string handleCommand(const std::string &command,
             std::string c;
             int gID;
             ss >> c >> gID;
-            return handleReturn(clientAddr, gID, games);
+            return handleReturn(currentUser, gID, games);  // Use currentUser instead of clientAddr
         }
     }
     // MYGAMES commands
     if (myGamesMode) {
         if (command == "HISTORY") {
             //HISTORY
-            return handleHistory(clientAddr, games);
+            return handleHistory(currentUser, games);  // Use currentUser instead of clientAddr
         }
         else if (command.rfind("RECOMMEND", 0) == 0) {
             //RECOMMEND
@@ -844,7 +888,7 @@ std::string handleCommand(const std::string &command,
             if (!f.empty() && f != "platform" && f != "genre") {
                 return "400 BAD REQUEST - Invalid filter. Use 'platform' or 'genre'.";
             }
-            return handleRecommend(clientAddr, games, f);
+            return handleRecommend(currentUser, games, f);  // Use currentUser instead of clientAddr
         }
         else if (command.rfind("RATE ", 0) == 0) {
             //RATE
@@ -852,7 +896,7 @@ std::string handleCommand(const std::string &command,
             std::string c;
             int gID, val;
             ss >> c >> gID >> val;
-            return handleRate(clientAddr, gID, val, games);
+            return handleRate(currentUser, gID, val, games);  // Use currentUser instead of clientAddr
         }
     }
     //BYE
@@ -861,6 +905,259 @@ std::string handleCommand(const std::string &command,
     }
     // fallback
     return "400 BAD REQUEST";
+}
+
+// Forward declaration
+int RAND_bytes_range(int max);
+
+// Generate a random 8-character password 
+// Must include uppercase, lowercase, digit, and special char
+std::string generate_password() {
+    const std::string uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const std::string lowercase = "abcdefghijklmnopqrstuvwxyz";
+    const std::string digits = "0123456789";
+    const std::string special = "!@#$%^&*";
+    
+    std::string password;
+    
+    // Add at least one from each category
+    password += uppercase[RAND_bytes_range(uppercase.size())];
+    password += lowercase[RAND_bytes_range(lowercase.size())];
+    password += digits[RAND_bytes_range(digits.size())];
+    password += special[RAND_bytes_range(special.size())];
+    
+    // Add 4 more random characters
+    const std::string all = uppercase + lowercase + digits + special;
+    for (int i = 0; i < 4; i++) {
+        password += all[RAND_bytes_range(all.size())];
+    }
+    
+    // Shuffle the password
+    std::vector<char> password_chars(password.begin(), password.end());
+    for (int i = password_chars.size() - 1; i > 0; i--) {
+        int j = RAND_bytes_range(i + 1);
+        std::swap(password_chars[i], password_chars[j]);
+    }
+    
+    return std::string(password_chars.begin(), password_chars.end());
+}
+
+// Helper function to get a random number using RAND_bytes
+int RAND_bytes_range(int max) {
+    unsigned char rand_byte;
+    if (RAND_bytes(&rand_byte, 1) != 1) {
+        throw std::runtime_error("Failed to generate random bytes");
+    }
+    return rand_byte % max;
+}
+
+// Generate a 16-byte random salt
+std::vector<unsigned char> generate_salt() {
+    std::vector<unsigned char> salt(16);
+    if (RAND_bytes(salt.data(), salt.size()) != 1) {
+        throw std::runtime_error("Failed to generate random salt");
+    }
+    return salt;
+}
+
+// Hash password using PBKDF2-HMAC-SHA256
+std::vector<unsigned char> hash_password(const std::string& password, const std::vector<unsigned char>& salt) {
+    std::vector<unsigned char> hash(32); // SHA-256 output is 32 bytes
+    
+    if (PKCS5_PBKDF2_HMAC(
+            password.c_str(), 
+            password.length(),
+            salt.data(), 
+            salt.size(),
+            10000,  // 10,000 iterations as required
+            EVP_sha256(),
+            hash.size(), 
+            hash.data()) != 1) {
+        throw std::runtime_error("Failed to hash password");
+    }
+    
+    return hash;
+}
+
+// Load credentials from file
+bool load_credentials() {
+    std::lock_guard<std::mutex> lock(credentialMutex);
+    
+    std::ifstream file(".games_shadow");
+    if (!file.is_open()) {
+        // It's fine if the file doesn't exist yet
+        return true;
+    }
+    
+    std::string line;
+    while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        std::string username, record;
+        
+        if (std::getline(iss, username, ':') && std::getline(iss, record)) {
+            // Parse: $pbkdf2-sha256$work_factor$salt_base64$hash_base64
+            if (record.substr(0, 14) != "$pbkdf2-sha256$") {
+                std::cerr << "Invalid credential record for user: " << username << std::endl;
+                continue;
+            }
+            
+            size_t pos1 = record.find('$', 14);
+            size_t pos2 = record.find('$', pos1 + 1);
+            
+            if (pos1 == std::string::npos || pos2 == std::string::npos) {
+                std::cerr << "Invalid credential format for user: " << username << std::endl;
+                continue;
+            }
+            
+            std::string work_factor = record.substr(14, pos1 - 14);
+            std::string salt_base64 = record.substr(pos1 + 1, pos2 - pos1 - 1);
+            std::string hash_base64 = record.substr(pos2 + 1);
+            
+            UserCredential cred;
+            cred.username = username;
+            cred.salt = salt_base64;
+            cred.hash = hash_base64;
+            cred.failedAttempts = 0;
+            
+            userCredentials[username] = cred;
+        }
+    }
+    
+    return true;
+}
+
+// Save credentials to file
+bool save_credentials() {
+    std::lock_guard<std::mutex> lock(credentialMutex);
+    
+    std::ofstream file(".games_shadow");
+    if (!file.is_open()) {
+        std::cerr << "Failed to open .games_shadow for writing" << std::endl;
+        return false;
+    }
+    
+    for (const auto& [username, cred] : userCredentials) {
+        file << username << ":$pbkdf2-sha256$10000$" << cred.salt << "$" << cred.hash << "\n";
+    }
+    
+    return true;
+}
+
+// Handle USER command - this checks if the user exists or starts registration
+std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser) {
+    std::lock_guard<std::mutex> lock(credentialMutex);
+    
+    currentUser = username;
+    authenticated = false;
+    
+    // Check if user exists
+    auto it = userCredentials.find(username);
+    if (it != userCredentials.end()) {
+        // Reset failed attempts if this is a new login attempt
+        it->second.failedAttempts = 0;
+        return "331 User name okay, need password.";
+    } else {
+        // User doesn't exist, prepare for registration
+        return "331 New user, need password to create account.";
+    }
+}
+
+// Handle PASS command - authenticate user or register new user
+std::string handlePass(const std::string &password, bool &authenticated, std::string &currentUser) {
+    std::lock_guard<std::mutex> lock(credentialMutex);
+    
+    // Check if user exists
+    auto it = userCredentials.find(currentUser);
+    if (it != userCredentials.end()) {
+        // User exists, authenticate
+        UserCredential &cred = it->second;
+        
+        // Check for too many failed attempts
+        if (cred.failedAttempts >= 2) {
+            return "530 Authentication failed: too many invalid attempts.";
+        }
+        
+        // Decode the stored salt
+        auto salt_bin = base64_decode(cred.salt);
+        
+        // Hash the provided password with the stored salt
+        auto hash = hash_password(password, salt_bin);
+        std::string hash_b64 = base64_encode(hash.data(), hash.size());
+        
+        // Compare with stored hash
+        if (hash_b64 == cred.hash) {
+            authenticated = true;
+            cred.failedAttempts = 0;
+            return "230 User authenticated, access granted.";
+        } else {
+            // Failed authentication
+            cred.failedAttempts++;
+            authenticated = false;
+            
+            if (cred.failedAttempts >= 2) {
+                return "530 Authentication failed: too many invalid attempts.";
+            } else {
+                return "530 Authentication failed: invalid password.";
+            }
+        }
+    } else {
+        // Register new user
+        auto salt = generate_salt();
+        auto hash = hash_password(password, salt);
+        
+        // Convert binary salt and hash to base64 for storage
+        std::string salt_b64 = base64_encode(salt.data(), salt.size());
+        std::string hash_b64 = base64_encode(hash.data(), hash.size());
+        
+        // Store new credentials
+        UserCredential cred;
+        cred.username = currentUser;
+        cred.salt = salt_b64;
+        cred.hash = hash_b64;
+        cred.failedAttempts = 0;
+        
+        userCredentials[currentUser] = cred;
+        
+        // Save to file
+        if (!save_credentials()) {
+            return "500 INTERNAL SERVER ERROR - Failed to save credentials";
+        }
+        
+        authenticated = true;
+        return "230 New user registered: " + currentUser;
+    }
+}
+
+// Generate a random password for a new user
+std::string handleNewUser(const std::string &username) {
+    std::lock_guard<std::mutex> lock(credentialMutex);
+    
+    // Generate random password
+    std::string password = generate_password();
+    
+    // Generate salt and hash
+    auto salt = generate_salt();
+    auto hash = hash_password(password, salt);
+    
+    // Convert binary salt and hash to base64 for storage
+    std::string salt_b64 = base64_encode(salt.data(), salt.size());
+    std::string hash_b64 = base64_encode(hash.data(), hash.size());
+    
+    // Store new credentials
+    UserCredential cred;
+    cred.username = username;
+    cred.salt = salt_b64;
+    cred.hash = hash_b64;
+    cred.failedAttempts = 0;
+    
+    userCredentials[username] = cred;
+    
+    // Save to file
+    if (!save_credentials()) {
+        return "500 INTERNAL SERVER ERROR - Failed to save credentials";
+    }
+    
+    return "230 New user created. Your password is: " + password;
 }
 
 int main(int argc, char* argv[]) {
@@ -888,6 +1185,13 @@ int main(int argc, char* argv[]) {
     // Initialize OpenSSL
     if (!init_openssl()) {
         std::cerr << "Failed to initialize OpenSSL" << std::endl;
+        return 1;
+    }
+
+    // Load user credentials from .games_shadow file
+    if (!load_credentials()) {
+        std::cerr << "Failed to load user credentials" << std::endl;
+        cleanup_openssl();
         return 1;
     }
 
@@ -966,10 +1270,11 @@ int main(int argc, char* argv[]) {
                 std::array<char, MAXDATASIZE> buf;
                 int numbytes;
 
-                bool heloSetup = false;
+                bool authenticated = false;
                 bool browseMode = false;
                 bool rentMode = false;
                 bool myGamesMode = false;
+                std::string currentUser;
 
                 while (true) {
                     numbytes = ssl_conn.read(buf.data(), MAXDATASIZE - 1);
@@ -986,9 +1291,9 @@ int main(int argc, char* argv[]) {
 
                     std::string response = handleCommand(
                         received, clientAddress,
-                        heloSetup, browseMode,
+                        authenticated, browseMode,
                         rentMode, myGamesMode,
-                        games
+                        games, currentUser
                     );
                     
                     if (ssl_conn.write(response.c_str(), response.size()) <= 0) {
