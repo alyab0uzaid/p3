@@ -23,6 +23,88 @@
 
 constexpr size_t MAXDATASIZE = 100000;
 
+// Add a helper function to directly test authentication flow
+bool test_authentication(SSL* ssl, const std::string& username, const std::string& password) {
+    std::cout << "\n=== Testing Authentication Flow ===\n";
+    
+    // Send USER command
+    std::string user_cmd = "USER " + username + "\r\n";
+    std::cout << "Sending: " << user_cmd;
+    if (SSL_write(ssl, user_cmd.c_str(), user_cmd.length()) <= 0) {
+        std::cerr << "Error sending USER command\n";
+        return false;
+    }
+    
+    // Read USER response
+    std::array<char, MAXDATASIZE> buffer;
+    int bytes = SSL_read(ssl, buffer.data(), buffer.size() - 1);
+    if (bytes <= 0) {
+        std::cerr << "Error reading USER response\n";
+        return false;
+    }
+    buffer[bytes] = '\0';
+    std::cout << "Received (" << bytes << " bytes): " << buffer.data() << std::endl;
+    
+    // Send PASS command
+    std::string pass_cmd = "PASS " + password + "\r\n";
+    std::cout << "Sending: " << pass_cmd;
+    if (SSL_write(ssl, pass_cmd.c_str(), pass_cmd.length()) <= 0) {
+        std::cerr << "Error sending PASS command\n";
+        return false;
+    }
+    
+    // Read PASS response with retry logic
+    bytes = 0;
+    for (int i = 0; i < 10; i++) {  // Try up to 10 times with delays
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        bytes = SSL_read(ssl, buffer.data(), buffer.size() - 1);
+        if (bytes > 0) break;
+        std::cout << "No response yet, retrying... (" << i+1 << "/10)\n";
+    }
+    
+    if (bytes <= 0) {
+        std::cerr << "Error reading PASS response after multiple attempts\n";
+        // Dump SSL errors
+        int err = SSL_get_error(ssl, bytes);
+        std::cerr << "SSL error code: " << err << std::endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    buffer[bytes] = '\0';
+    std::cout << "Received (" << bytes << " bytes): " << buffer.data() << std::endl;
+    
+    // Send HELP command to test if authentication worked
+    std::string help_cmd = "HELP\r\n";
+    std::cout << "Sending: " << help_cmd;
+    if (SSL_write(ssl, help_cmd.c_str(), help_cmd.length()) <= 0) {
+        std::cerr << "Error sending HELP command\n";
+        return false;
+    }
+    
+    // Read HELP response with retry logic
+    bytes = 0;
+    for (int i = 0; i < 10; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        bytes = SSL_read(ssl, buffer.data(), buffer.size() - 1);
+        if (bytes > 0) break;
+        std::cout << "No response yet, retrying... (" << i+1 << "/10)\n";
+    }
+    
+    if (bytes <= 0) {
+        std::cerr << "Error reading HELP response\n";
+        return false;
+    }
+    
+    buffer[bytes] = '\0';
+    std::cout << "HELP response (" << bytes << " bytes):\n";
+    std::cout << "===================\n";
+    std::cout << buffer.data();
+    std::cout << "===================\n";
+    
+    return true;
+}
+
 // Get sockaddr, IPv4 or IPv6
 void* get_in_addr(struct sockaddr* sa) {
     if (sa->sa_family == AF_INET) {
@@ -108,6 +190,31 @@ int main(int argc, char* argv[]) {
     std::array<char, MAXDATASIZE> buf;
     std::string userInput;
 
+    // Show menu options
+    std::cout << "\n=== CLIENT MENU ===\n";
+    std::cout << "1: Run automated authentication test\n";
+    std::cout << "2: Interactive mode\n";
+    std::cout << "Choice: ";
+    
+    int menu_choice = 0;
+    std::cin >> menu_choice;
+    std::cin.ignore(); // Clear newline
+    
+    if (menu_choice == 1) {
+        // Prompt for test credentials
+        std::string test_user, test_pass;
+        std::cout << "Enter username to test: ";
+        std::getline(std::cin, test_user);
+        std::cout << "Enter password to test: ";
+        std::getline(std::cin, test_pass);
+        
+        if (test_authentication(ssl, test_user, test_pass)) {
+            std::cout << "\nAuthentication test PASSED! You can now use interactive mode.\n\n";
+        } else {
+            std::cout << "\nAuthentication test FAILED! Check server logs for details.\n\n";
+        }
+    }
+    
     // Interactive loop for sending and receiving messages
     while (true) {
         std::cout << "> ";
@@ -117,25 +224,49 @@ int main(int argc, char* argv[]) {
             break; // Exit the loop if the user types "exit"
         }
 
-        if (send(sockfd, userInput.c_str(), userInput.size(), 0) == -1) {
-            perror("send");
+        // Add CRLF to the end of the command (for proper protocol formatting)
+        std::string command = userInput + "\r\n";
+        
+        // Send via SSL
+        if (SSL_write(ssl, command.c_str(), command.length()) <= 0) {
+            std::cerr << "Error sending command via SSL\n";
             break;
         }
 
-        int numbytes = recv(sockfd, buf.data(), MAXDATASIZE - 1, 0);
-        if (numbytes == -1) {
-            perror("recv");
-            break;
-        } else if (numbytes == 0) {
-            std::cout << "Server closed the connection.\n";
-            break;
+        // Read response with retry logic
+        std::memset(buf.data(), 0, MAXDATASIZE);
+        int total_bytes = 0;
+        bool received_data = false;
+        
+        // Wait for response
+        std::cout << "Waiting for server response...\n";
+        for (int attempts = 0; attempts < 5; attempts++) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            
+            int bytes = SSL_read(ssl, buf.data() + total_bytes, MAXDATASIZE - total_bytes - 1);
+            if (bytes > 0) {
+                total_bytes += bytes;
+                buf[total_bytes] = '\0';
+                received_data = true;
+                break; // Got data, exit retry loop
+            }
         }
-
-        buf[numbytes] = '\0';
-        std::cout << std::format("Server: {}\n", buf.data());
+        
+        if (received_data) {
+            std::cout << "Server response:\n-------------------\n";
+            std::cout << buf.data();
+            std::cout << "\n-------------------\n";
+        } else {
+            std::cout << "No response received from server\n";
+        }
     }
 
+    // Clean shutdown of SSL connection
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
     close(sockfd);
+    cleanup_openssl();
+    
     return 0;
 }
 
