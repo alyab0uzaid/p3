@@ -41,6 +41,125 @@
 #define BACKLOG 10
 #define MAXDATASIZE 100
 
+// Global SSL context
+SSL_CTX* ssl_ctx = nullptr;
+
+// Initialize OpenSSL and create SSL context
+bool init_openssl() {
+    // Initialize OpenSSL
+    SSL_load_error_strings();
+    OpenSSL_add_ssl_algorithms();
+    
+    // Create SSL context with TLS 1.3
+    const SSL_METHOD* method = TLS_server_method();
+    ssl_ctx = SSL_CTX_new(method);
+    if (!ssl_ctx) {
+        std::cerr << "Unable to create SSL context" << std::endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    // Set TLS 1.3 as the only allowed protocol version
+    if (SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_3_VERSION) != 1) {
+        std::cerr << "Failed to set minimum TLS version" << std::endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    if (SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_3_VERSION) != 1) {
+        std::cerr << "Failed to set maximum TLS version" << std::endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    // Configure the cipher suites for TLS 1.3
+    if (SSL_CTX_set_ciphersuites(ssl_ctx, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256") != 1) {
+        std::cerr << "Failed to set cipher suites" << std::endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    // Load certificate and private key
+    if (SSL_CTX_use_certificate_file(ssl_ctx, "p3server.crt", SSL_FILETYPE_PEM) != 1) {
+        std::cerr << "Failed to load certificate" << std::endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    if (SSL_CTX_use_PrivateKey_file(ssl_ctx, "p3server.key", SSL_FILETYPE_PEM) != 1) {
+        std::cerr << "Failed to load private key" << std::endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    // Verify private key matches the certificate
+    if (SSL_CTX_check_private_key(ssl_ctx) != 1) {
+        std::cerr << "Private key does not match the certificate" << std::endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    std::cout << "OpenSSL initialized with TLS 1.3" << std::endl;
+    return true;
+}
+
+// Clean up OpenSSL resources
+void cleanup_openssl() {
+    if (ssl_ctx) {
+        SSL_CTX_free(ssl_ctx);
+        ssl_ctx = nullptr;
+    }
+    
+    EVP_cleanup();
+    ERR_free_strings();
+}
+
+// Wrapper for SSL connection
+struct SSLConnection {
+    SSL* ssl;
+    int socket;
+    
+    SSLConnection(int sock) : ssl(nullptr), socket(sock) {
+        ssl = SSL_new(ssl_ctx);
+        if (!ssl) {
+            ERR_print_errors_fp(stderr);
+            throw std::runtime_error("Failed to create SSL structure");
+        }
+        
+        SSL_set_fd(ssl, socket);
+    }
+    
+    ~SSLConnection() {
+        if (ssl) {
+            SSL_shutdown(ssl);
+            SSL_free(ssl);
+        }
+        close(socket);
+    }
+    
+    // Perform SSL handshake
+    bool accept() {
+        int ret = SSL_accept(ssl);
+        if (ret <= 0) {
+            int err = SSL_get_error(ssl, ret);
+            std::cerr << "SSL accept error: " << err << std::endl;
+            ERR_print_errors_fp(stderr);
+            return false;
+        }
+        return true;
+    }
+    
+    // Read data from SSL connection
+    int read(void* buf, int num) {
+        return SSL_read(ssl, buf, num);
+    }
+    
+    // Write data to SSL connection
+    int write(const void* buf, int num) {
+        return SSL_write(ssl, buf, num);
+    }
+};
+
 // Keeps track of a user's checkout or return event.
 struct RentalRecord {
     int gameId;
@@ -766,6 +885,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Initialize OpenSSL
+    if (!init_openssl()) {
+        std::cerr << "Failed to initialize OpenSSL" << std::endl;
+        return 1;
+    }
+
     std::vector<Game> games = loadGamesFromFile("games.db");
 
     memset(&hints, 0, sizeof hints);
@@ -775,6 +900,7 @@ int main(int argc, char* argv[]) {
 
     if ((rv = getaddrinfo(nullptr, port.c_str(), &hints, &servinfo)) != 0) {
         std::cerr << std::format("getaddrinfo: {}\n", gai_strerror(rv));
+        cleanup_openssl();
         return 1;
     }
     for (p = servinfo; p != NULL; p = p->ai_next) {
@@ -795,9 +921,11 @@ int main(int argc, char* argv[]) {
     freeaddrinfo(servinfo);
     if (p == NULL) {
         std::cerr << "server: failed to bind\n";
+        cleanup_openssl();
         return 2;
     }
     if (listen(sockfd, BACKLOG) == -1) {
+        cleanup_openssl();
         throw std::system_error(errno, std::generic_category(), "listen");
     }
 
@@ -805,6 +933,7 @@ int main(int argc, char* argv[]) {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
     if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        cleanup_openssl();
         throw std::system_error(errno, std::generic_category(), "sigaction");
     }
 
@@ -821,44 +950,68 @@ int main(int argc, char* argv[]) {
         logEvent("Connection from: " + std::string(s));
 
         std::thread clientThread([new_fd, s, &games]() {
-            std::array<char, MAXDATASIZE> buf;
-            int numbytes;
             std::string clientAddress(s);
-
-            bool heloSetup = false;
-            bool browseMode = false;
-            bool rentMode = false;
-            bool myGamesMode = false;
-
-            while (true) {
-                if ((numbytes = recv(new_fd, buf.data(), MAXDATASIZE - 1, 0)) == -1) {
-                    perror("recv");
-                    exit(1);
-                } else if (numbytes == 0) {
-                    logEvent("Client disconnected: " + clientAddress);
-                    break;
+            logEvent("Starting TLS handshake with client: " + clientAddress);
+            
+            try {
+                // Create SSL connection and perform handshake
+                SSLConnection ssl_conn(new_fd);
+                if (!ssl_conn.accept()) {
+                    logEvent("TLS handshake failed with client: " + clientAddress);
+                    return;
                 }
-                buf[numbytes] = '\0';
-                std::string received(buf.data());
+                
+                logEvent("TLS handshake successful with client: " + clientAddress);
+                
+                std::array<char, MAXDATASIZE> buf;
+                int numbytes;
 
-                std::string response = handleCommand(
-                    received, clientAddress,
-                    heloSetup, browseMode,
-                    rentMode, myGamesMode,
-                    games
-                );
-                if (send(new_fd, response.c_str(), response.size(), 0) == -1) {
-                    perror("send");
+                bool heloSetup = false;
+                bool browseMode = false;
+                bool rentMode = false;
+                bool myGamesMode = false;
+
+                while (true) {
+                    numbytes = ssl_conn.read(buf.data(), MAXDATASIZE - 1);
+                    if (numbytes <= 0) {
+                        if (numbytes < 0) {
+                            std::cerr << "SSL read error" << std::endl;
+                        }
+                        logEvent("Client disconnected: " + clientAddress);
+                        break;
+                    }
+                    
+                    buf[numbytes] = '\0';
+                    std::string received(buf.data());
+
+                    std::string response = handleCommand(
+                        received, clientAddress,
+                        heloSetup, browseMode,
+                        rentMode, myGamesMode,
+                        games
+                    );
+                    
+                    if (ssl_conn.write(response.c_str(), response.size()) <= 0) {
+                        std::cerr << "SSL write error" << std::endl;
+                        break;
+                    }
+                    
+                    if (response.rfind("200 BYE", 0) == 0) {
+                        logEvent("Client disconnected: " + clientAddress);
+                        break;
+                    }
                 }
-                if (response.rfind("200 BYE", 0) == 0) {
-                    logEvent("Client disconnected: " + clientAddress);
-                    break;
-                }
+            } catch (const std::exception& e) {
+                std::cerr << "Exception in client thread: " << e.what() << std::endl;
             }
-            close(new_fd);
+            
+            // The SSLConnection destructor will clean up the connection and close the socket
         });
         clientThread.detach();
     }
+
+    // Clean up OpenSSL
+    cleanup_openssl();
 
     return 0;
 }
