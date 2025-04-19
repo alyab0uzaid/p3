@@ -1,10 +1,11 @@
 /*
- * P1 SAMPLE SERVER
+ * P3 SECURE SERVER
  * ---------------
- * Author: Thoshitha Gamage
- * Date: 01/29/2025
+ * Based on P1 sample by Thoshitha Gamage
+ * Updated for P3 security requirements
+ * Date: 04/18/2025
  * License: MIT License
- * Description: This is a sample code for CS447 Spring 2025 P1 server code.
+ * Description: This is a secure video game rental server using TLS 1.3 for CS447 Spring 2025 P3.
  */
 
 #include <iostream>
@@ -31,6 +32,11 @@
 #include <iomanip>
 #include <unordered_map>
 #include <mutex>
+
+// OpenSSL headers for TLS support
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/crypto.h>
 
 #define BACKLOG 10
 #define MAXDATASIZE 100
