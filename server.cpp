@@ -1121,11 +1121,17 @@ bool load_credentials() {
     // Clear existing credentials before loading
     userCredentials.clear();
     
-    // Get full path for .games_shadow
-    std::string filePath = "./.games_shadow";  // Use relative path for simplicity
+    // Get full path for .games_shadow - use absolute path for consistency
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+        std::cerr << "Failed to get current working directory: " << strerror(errno) << std::endl;
+        return false;
+    }
+    
+    std::string filePath = std::string(cwd) + "/.games_shadow";
     std::cout << "Looking for credential file at: " << filePath << std::endl;
     
-    // Check if file exists
+    // Check if file exists with proper error handling
     if (!std::filesystem::exists(filePath)) {
         std::cout << "Credential file not found, creating new empty file" << std::endl;
         
@@ -1137,7 +1143,7 @@ bool load_credentials() {
         }
         newFile.close();
         std::cout << "Created empty credential file" << std::endl;
-        return true;
+        return true;  // No users to load yet
     }
     
     // File exists, try to open it
@@ -1148,65 +1154,140 @@ bool load_credentials() {
         return false;
     }
     
-    // Successfully opened, read line by line
+    // Add hex dump of the first few bytes to check for BOM
+    file.seekg(0, std::ios::beg);
+    char buffer[20];
+    std::memset(buffer, 0, sizeof(buffer));
+    file.read(buffer, sizeof(buffer) - 1);
+    
+    std::cout << "DEBUG - First 20 bytes of credential file (hex): ";
+    for (int i = 0; i < 20 && buffer[i] != 0; i++) {
+        printf("%02X ", static_cast<unsigned char>(buffer[i]));
+    }
+    std::cout << std::endl;
+    
+    // Reset file position to beginning
+    file.clear();
+    file.seekg(0, std::ios::beg);
+    
     std::string line;
     int lineCount = 0;
-    int successCount = 0;
+    int loadedCount = 0;
     
     while (std::getline(file, line)) {
+        lineCount++;
+        
+        std::cout << "Processing line " << lineCount << ": " << line << std::endl;
+        
         // Skip empty lines
         if (line.empty()) {
-            std::cout << "Skipping empty line" << std::endl;
+            std::cerr << "Skipping empty line " << lineCount << std::endl;
             continue;
         }
         
-        lineCount++;
-        std::cout << "Processing line " << lineCount << ": " << line << std::endl;
-        
-        // Split into username and credential data
-        std::istringstream iss(line);
-        std::string username, record;
-        
-        if (std::getline(iss, username, ':') && std::getline(iss, record)) {
-            // Parse: $pbkdf2-sha256$work_factor$salt_base64$hash_base64
-            if (record.substr(0, 14) != "$pbkdf2-sha256$") {
-                std::cerr << "Invalid credential format for user: " << username << std::endl;
-                continue;
-            }
-            
-            size_t pos1 = record.find('$', 14);
-            size_t pos2 = record.find('$', pos1 + 1);
-            
-            if (pos1 == std::string::npos || pos2 == std::string::npos) {
-                std::cerr << "Invalid credential format for user: " << username << std::endl;
-                continue;
-            }
-            
-            std::string work_factor = record.substr(14, pos1 - 14);
-            std::string salt_base64 = record.substr(pos1 + 1, pos2 - pos1 - 1);
-            std::string hash_base64 = record.substr(pos2 + 1);
-            
-            std::cout << "  Username: " << username << std::endl;
-            std::cout << "  Work Factor: " << work_factor << std::endl;
-            std::cout << "  Salt (Base64): " << salt_base64 << std::endl;
-            std::cout << "  Hash (Base64): " << hash_base64 << std::endl;
-            
-            UserCredential cred;
-            cred.username = username;
-            cred.salt = salt_base64;
-            cred.hash = hash_base64;
-            cred.failedAttempts = 0;
-            
-            userCredentials[username] = cred;
-            std::cout << "Successfully loaded user: " << username << std::endl;
-            successCount++;
-        } else {
-            std::cerr << "Malformed line in credentials file, line " << lineCount << std::endl;
+        // Split username and credential on colon
+        size_t colonPos = line.find(':');
+        if (colonPos == std::string::npos) {
+            std::cerr << "Invalid line format at line " << lineCount << ": Missing colon separator" << std::endl;
+            continue;
         }
+        
+        std::string username = line.substr(0, colonPos);
+        std::string record = line.substr(colonPos + 1);
+        
+        // Trim any whitespace from username and record
+        username.erase(0, username.find_first_not_of(" \t\r\n"));
+        username.erase(username.find_last_not_of(" \t\r\n") + 1);
+        record.erase(0, record.find_first_not_of(" \t\r\n"));
+        record.erase(record.find_last_not_of(" \t\r\n") + 1);
+        
+        std::cout << "User: [" << username << "], Record: [" << record << "]" << std::endl;
+        
+        // Debug: print the first few characters of the record as hex codes
+        std::cout << "DEBUG - First 10 chars of record (hex): ";
+        for (int i = 0; i < 10 && i < record.length(); i++) {
+            printf("%02X ", static_cast<unsigned char>(record[i]));
+        }
+        std::cout << std::endl;
+        
+        // Create a clean version of the record by removing any non-ASCII characters at the start
+        std::string cleanRecord = record;
+        while (!cleanRecord.empty() && 
+               (static_cast<unsigned char>(cleanRecord[0]) < 32 || 
+                static_cast<unsigned char>(cleanRecord[0]) > 126)) {
+            cleanRecord.erase(0, 1);
+        }
+        
+        // At minimum, the record should contain "pbkdf2" somewhere
+        if (cleanRecord.find("pbkdf2") == std::string::npos) {
+            std::cerr << "Invalid credential format for user: " << username << " - missing pbkdf2" << std::endl;
+            continue;
+        }
+        
+        // Parse: $pbkdf2-sha256$work_factor$salt_base64$hash_base64
+        std::string expectedPrefix = "$pbkdf2-sha256$";
+        std::cout << "DEBUG: Checking record prefix. Record: [" << cleanRecord << "]" << std::endl;
+        std::cout << "DEBUG: Expected prefix: [" << expectedPrefix << "] length: " << expectedPrefix.length() << std::endl;
+        std::cout << "DEBUG: Actual prefix: [" << cleanRecord.substr(0, expectedPrefix.length()) << "] length: " << cleanRecord.substr(0, expectedPrefix.length()).length() << std::endl;
+        
+        // Enhanced debugging for character-by-character comparison
+        bool prefixMatch = true;
+        for (size_t i = 0; i < expectedPrefix.length() && i < cleanRecord.length(); i++) {
+            if (cleanRecord[i] != expectedPrefix[i]) {
+                std::cout << "DEBUG: Mismatch at position " << i << ": expected '" 
+                          << expectedPrefix[i] << "' (ASCII: " << (int)expectedPrefix[i] 
+                          << "), got '" << cleanRecord[i] << "' (ASCII: " << (int)cleanRecord[i] << ")" << std::endl;
+                prefixMatch = false;
+            }
+        }
+        
+        if (!prefixMatch || cleanRecord.substr(0, expectedPrefix.length()) != expectedPrefix) {
+            std::cerr << "Invalid credential format for user: " << username << std::endl;
+            std::cerr << "Expected prefix: [" << expectedPrefix << "]" << std::endl;
+            std::cerr << "Actual record starts with: [" << cleanRecord.substr(0, expectedPrefix.length()) << "]" << std::endl;
+            continue;
+        }
+        
+        // Find positions of $ signs to extract the components
+        size_t firstDollar = cleanRecord.find('$');
+        size_t secondDollar = cleanRecord.find('$', firstDollar + 1);
+        size_t thirdDollar = cleanRecord.find('$', secondDollar + 1);
+        size_t fourthDollar = cleanRecord.find('$', thirdDollar + 1);
+        
+        if (firstDollar == std::string::npos || secondDollar == std::string::npos || 
+            thirdDollar == std::string::npos || fourthDollar == std::string::npos) {
+            std::cerr << "Malformed record for user: " << username << " - missing $ separators" << std::endl;
+            continue;
+        }
+        
+        std::string algorithm = cleanRecord.substr(firstDollar + 1, secondDollar - firstDollar - 1);
+        std::string workFactorStr = cleanRecord.substr(secondDollar + 1, thirdDollar - secondDollar - 1);
+        std::string saltBase64 = cleanRecord.substr(thirdDollar + 1, fourthDollar - thirdDollar - 1);
+        std::string hashBase64 = cleanRecord.substr(fourthDollar + 1);
+        
+        // Convert work factor to integer
+        int workFactor;
+        try {
+            workFactor = std::stoi(workFactorStr);
+        } catch (const std::exception& e) {
+            std::cerr << "Invalid work factor for user: " << username << " - " << e.what() << std::endl;
+            continue;
+        }
+        
+        // Store credentials
+        UserCredential cred;
+        cred.username = username;
+        cred.salt = saltBase64;
+        cred.hash = hashBase64;
+        cred.failedAttempts = 0;
+        
+        userCredentials[username] = cred;
+        std::cout << "Successfully loaded user: " << username << std::endl;
+        loadedCount++;
     }
     
     file.close();
-    std::cout << "Credential loading complete. Loaded " << successCount << " out of " << lineCount << " entries." << std::endl;
+    std::cout << "Credential loading complete. Loaded " << loadedCount << " out of " << lineCount << " entries." << std::endl;
     
     // Debug: print all loaded users
     std::cout << "Currently loaded users: ";
@@ -1220,10 +1301,27 @@ bool load_credentials() {
 
 // Save credentials to file
 bool save_credentials() {
-    // Use a simpler, more direct approach with C++ streams
+    // Use absolute path for consistency
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+        std::cerr << "Failed to get current working directory: " << strerror(errno) << std::endl;
+        return false;
+    }
     
-    std::string filePath = "./.games_shadow";  // Use relative path for simplicity
+    std::string filePath = std::string(cwd) + "/.games_shadow";
     std::cout << "Saving credentials to: " << filePath << std::endl;
+    
+    // Backup existing file if it exists
+    if (std::filesystem::exists(filePath)) {
+        std::string backupPath = filePath + ".bak";
+        try {
+            std::filesystem::copy_file(filePath, backupPath, 
+                                      std::filesystem::copy_options::overwrite_existing);
+            std::cout << "Created backup of existing credentials file" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Warning: Failed to create backup: " << e.what() << std::endl;
+        }
+    }
     
     // Debug: show users being saved
     std::cout << "Saving users: ";
@@ -1232,7 +1330,7 @@ bool save_credentials() {
     }
     std::cout << std::endl;
     
-    // First create a temporary file
+    // Create a temporary file
     std::string tempFilePath = filePath + ".tmp";
     
     // Open output file
@@ -1268,10 +1366,10 @@ bool save_credentials() {
     }
     
     // Rename temporary file to the actual file (atomic operation)
-    std::error_code ec;
-    std::filesystem::rename(tempFilePath, filePath, ec);
-    if (ec) {
-        std::cerr << "ERROR: Failed to rename temporary file: " << ec.message() << std::endl;
+    try {
+        std::filesystem::rename(tempFilePath, filePath);
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR: Failed to rename temporary file: " << e.what() << std::endl;
         return false;
     }
     
@@ -1283,17 +1381,34 @@ bool save_credentials() {
 std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser) {
     std::lock_guard<std::mutex> lock(credentialMutex);
     
+    std::cout << "DEBUG - handleUser called for: " << username << std::endl;
+    std::cout << "DEBUG - userCredentials size: " << userCredentials.size() << std::endl;
+    
     currentUser = username;
     authenticated = false;
     
-    // Check if user exists
+    // Check if user exists - with enhanced debugging
+    std::cout << "DEBUG - Checking if user exists in map..." << std::endl;
     auto it = userCredentials.find(username);
+    
     if (it != userCredentials.end()) {
+        // User exists, prepare for authentication
+        std::cout << "DEBUG - FOUND: Existing user found in credentials map: " << username << std::endl;
+        
         // Reset failed attempts if this is a new login attempt
         it->second.failedAttempts = 0;
         return "331 User name okay, need password.";
     } else {
         // User doesn't exist, prepare for registration
+        std::cout << "DEBUG - NOT FOUND: User not found in credentials map: " << username << std::endl;
+        
+        // Log existing users for debugging
+        std::cout << "DEBUG - Currently loaded users: ";
+        for (const auto& [user, _] : userCredentials) {
+            std::cout << user << " ";
+        }
+        std::cout << std::endl;
+        
         return "331 New user, need password to create account.";
     }
 }
@@ -1303,33 +1418,34 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
                       bool &browseMode, bool &rentMode, bool &myGamesMode) {
     std::lock_guard<std::mutex> lock(credentialMutex);
     
-    std::cout << "Processing PASS command for user: " << currentUser << std::endl;
+    std::cout << "DEBUG - handlePass called for user: " << currentUser << std::endl;
+    std::cout << "DEBUG - userCredentials size: " << userCredentials.size() << std::endl;
     
     // Check if user exists
     auto it = userCredentials.find(currentUser);
     if (it != userCredentials.end()) {
         // User exists, authenticate
-        std::cout << "Existing user found, performing authentication" << std::endl;
+        std::cout << "DEBUG - Existing user found, performing authentication" << std::endl;
         UserCredential &cred = it->second;
         
         // Check for too many failed attempts
         if (cred.failedAttempts >= 2) {
-            std::cout << "Too many failed attempts for user: " << currentUser << std::endl;
+            std::cout << "DEBUG - Too many failed attempts for user: " << currentUser << std::endl;
             return "530 Authentication failed: too many invalid attempts.";
         }
         
         try {
             // Decode the stored salt
-            std::cout << "Decoding salt: " << cred.salt << std::endl;
+            std::cout << "DEBUG - Decoding salt: " << cred.salt << std::endl;
             auto salt_bin = base64_decode(cred.salt);
-            std::cout << "Salt decoded, size: " << salt_bin.size() << " bytes" << std::endl;
+            std::cout << "DEBUG - Salt decoded, size: " << salt_bin.size() << " bytes" << std::endl;
             
             // Hash the provided password with the stored salt
-            std::cout << "Hashing password: '" << password << "'" << std::endl;
+            std::cout << "DEBUG - Hashing password: '" << password << "'" << std::endl;
             auto hash = hash_password(password, salt_bin);
             std::string hash_b64 = base64_encode(hash.data(), hash.size());
             
-            std::cout << "Comparing hashes:" << std::endl;
+            std::cout << "DEBUG - Comparing hashes:" << std::endl;
             std::cout << "  Stored hash: " << cred.hash << std::endl;
             std::cout << "  Computed hash: " << hash_b64 << std::endl;
             
@@ -1341,7 +1457,7 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
                 browseMode = true;
                 rentMode = false;
                 myGamesMode = false;
-                std::cout << "Authentication successful for user: " << currentUser << std::endl;
+                std::cout << "DEBUG - Authentication successful for user: " << currentUser << std::endl;
                 // CRITICAL FIX: Absolutely minimal response for OpenSSL s_client
                 return "230 OK";
             } else {
@@ -1349,41 +1465,46 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
                 cred.failedAttempts++;
                 authenticated = false;
                 
-                std::cout << "Authentication failed for user: " << currentUser << std::endl;
-                std::cout << "Failed attempts: " << cred.failedAttempts << "/2" << std::endl;
+                std::cout << "DEBUG - Authentication failed for user: " << currentUser << std::endl;
+                std::cout << "DEBUG - Failed attempts: " << cred.failedAttempts << "/2" << std::endl;
                 return "530 Authentication failed: Invalid password";
             }
         } catch (const std::exception& e) {
-            std::cerr << "Exception during authentication: " << e.what() << std::endl;
+            std::cerr << "DEBUG - Exception during authentication: " << e.what() << std::endl;
             return "500 INTERNAL SERVER ERROR - Exception during authentication";
         }
     } else {
-        // Register new user - we'll do this in a separate function to avoid deadlocks
-        std::cout << "Registering new user: " << currentUser << std::endl;
+        // Register new user
+        std::cout << "DEBUG - User not found in map for PASS command - registering new user: " << currentUser << std::endl;
+        std::cout << "DEBUG - Current map contents: ";
+        for (const auto& [user, _] : userCredentials) {
+            std::cout << user << " ";
+        }
+        std::cout << std::endl;
         
         try {
             // Generate random password if none provided
             std::string userPassword = password;
             if (userPassword.empty()) {
                 userPassword = generate_password();
-                std::cout << "Generated random password: " << userPassword << std::endl;
+                std::cout << "DEBUG - Generated random password: " << userPassword << std::endl;
             } else {
-                std::cout << "Using provided password" << std::endl;
+                std::cout << "DEBUG - Using provided password" << std::endl;
             }
             
             // Generate salt and hash outside the lock to minimize lock time
             auto salt = generate_salt();
-            std::cout << "Generated salt, size: " << salt.size() << " bytes" << std::endl;
+            std::cout << "DEBUG - Generated salt, size: " << salt.size() << " bytes" << std::endl;
             
             auto hash = hash_password(userPassword, salt);
-            std::cout << "Generated hash, size: " << hash.size() << " bytes" << std::endl;
+            std::cout << "DEBUG - Generated hash, size: " << hash.size() << " bytes" << std::endl;
             
             // Convert binary salt and hash to base64 for storage
             std::string salt_b64 = base64_encode(salt.data(), salt.size());
             std::string hash_b64 = base64_encode(hash.data(), hash.size());
             
-            std::cout << "Encoded salt: " << salt_b64 << std::endl;
-            std::cout << "Encoded hash: " << hash_b64 << std::endl;
+            std::cout << "DEBUG - Encoded salt: " << salt_b64 << std::endl;
+            std::cout << "DEBUG - Encoded hash: " << hash_b64 << std::endl;
             
             // Create credential object
             UserCredential cred;
@@ -1392,18 +1513,20 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
             cred.hash = hash_b64;
             cred.failedAttempts = 0;
             
-            // Store in memory and release the lock temporarily
+            // Store in memory
             userCredentials[currentUser] = cred;
+            std::cout << "DEBUG - Added user to credentials map: " << currentUser << std::endl;
             
             // Log that we're saving credentials
-            std::cout << "Saving credentials to file" << std::endl;
+            std::cout << "DEBUG - Saving credentials to file" << std::endl;
             
             // Save credentials but continue even if it fails
             bool saveResult = save_credentials();
             if (!saveResult) {
-                std::cerr << "Failed to save credentials to file, but continuing" << std::endl;
+                std::cerr << "DEBUG - Failed to save credentials to file, but continuing" << std::endl;
             } else {
-                std::cout << "Credentials saved successfully" << std::endl;
+                std::cout << "DEBUG - Credentials saved successfully" << std::endl;
+                std::cout << "DEBUG - Map now contains " << userCredentials.size() << " users" << std::endl;
             }
             
             // Set the user as authenticated and enable browse mode by default
@@ -1413,7 +1536,7 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
             myGamesMode = false;
             
             // Simple, minimal single-line response that's easier for s_client to display
-            std::cout << "Authentication successful for new user: " << currentUser << std::endl;
+            std::cout << "DEBUG - Authentication successful for new user: " << currentUser << std::endl;
             
             // If we generated a password, tell the user what it is
             if (password.empty()) {
@@ -1423,7 +1546,7 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
             }
         }
         catch (const std::exception& e) {
-            std::cerr << "Exception during credential preparation: " << e.what() << std::endl;
+            std::cerr << "DEBUG - Exception during credential preparation: " << e.what() << std::endl;
             return "500 INTERNAL SERVER ERROR - Exception during registration";
         }
     }
@@ -1502,6 +1625,20 @@ int main(int argc, char* argv[]) {
         std::cerr << "Failed to load user credentials" << std::endl;
         cleanup_openssl();
         return 1;
+    }
+    
+    // Debug: Check how many users are loaded
+    std::cout << "=======================================================" << std::endl;
+    std::cout << "SERVER STARTUP COMPLETE" << std::endl;
+    std::cout << "Loaded " << userCredentials.size() << " users from credentials file" << std::endl;
+    std::cout << "=======================================================" << std::endl;
+    
+    if (!userCredentials.empty()) {
+        std::cout << "User accounts loaded at startup:" << std::endl;
+        for (const auto& [username, cred] : userCredentials) {
+            std::cout << "  - " << username << std::endl;
+        }
+        std::cout << "=======================================================" << std::endl;
     }
 
     std::vector<Game> games = loadGamesFromFile("games.db");
