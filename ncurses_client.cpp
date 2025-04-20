@@ -241,11 +241,25 @@ bool username_form() {
     getmaxyx(stdscr, height, width);
     box(stdscr, 0, 0);
     
-    // Title
+    // Title with color if available
+    if (has_colors()) {
+        attron(COLOR_PAIR(1));
+    }
     attron(A_BOLD | A_UNDERLINE);
     mvprintw(2, (width - 20) / 2, "Game Rental System");
     attroff(A_BOLD | A_UNDERLINE);
+    if (has_colors()) {
+        attroff(COLOR_PAIR(1));
+    }
+    
     mvprintw(4, (width - 30) / 2, "Enter Your Username");
+    
+    // Add some decorative elements
+    mvaddch(2, 5, ACS_DIAMOND);
+    mvaddch(2, width - 6, ACS_DIAMOND);
+    
+    // Add instructions
+    mvprintw(6, (width - 50) / 2, "Enter your username to login or create a new account");
     
     FIELD *fields[2];
     FORM *form;
@@ -264,11 +278,24 @@ bool username_form() {
     // Post the form
     post_form(form);
     
-    // Labels
+    // Labels with better styling
+    attron(A_BOLD);
     mvprintw(8, (width - 30) / 2 - 12, "Username:");
-    mvprintw(height - 4, 2, "Press F1 or Enter to continue");
-    mvprintw(height - 3, 2, "Press F10 to exit");
+    attroff(A_BOLD);
+    
+    // Draw a horizontal separator line
+    for (int i = 2; i < width - 2; i++) {
+        mvaddch(height - 6, i, ACS_HLINE);
+    }
+    
+    // Instructions at the bottom
+    mvprintw(height - 4, 2, "Press Enter to continue");
+    mvprintw(height - 3, 2, "Press Esc to exit");
+    
     refresh();
+    
+    // Position cursor in the form field
+    form_driver(form, REQ_END_LINE);
     
     // Form navigation
     bool result = false;
@@ -276,14 +303,14 @@ bool username_form() {
     while(true) {
         ch = getch();
         
-        if (ch == KEY_F(10)) {
+        if (ch == 27) { // Escape key
             // Exit
             unpost_form(form);
             free_form(form);
             free_field(fields[0]);
             return false;
         }
-        else if (ch == KEY_F(1) || ch == 10) { // F1 or Enter key
+        else if (ch == 10) { // Enter key
             // Process form submission
             form_driver(form, REQ_VALIDATION);
             
@@ -340,19 +367,47 @@ bool password_form(const std::string& username, bool is_new_user) {
     getmaxyx(stdscr, height, width);
     box(stdscr, 0, 0);
     
-    // Title
+    // Title with color if available
+    if (has_colors()) {
+        attron(COLOR_PAIR(1));
+    }
     attron(A_BOLD | A_UNDERLINE);
     mvprintw(2, (width - 20) / 2, "Game Rental System");
     attroff(A_BOLD | A_UNDERLINE);
+    if (has_colors()) {
+        attroff(COLOR_PAIR(1));
+    }
+    
+    // Add decorative elements
+    mvaddch(2, 5, ACS_DIAMOND);
+    mvaddch(2, width - 6, ACS_DIAMOND);
     
     if (is_new_user) {
+        if (has_colors()) {
+            attron(COLOR_PAIR(4)); // Yellow for new users
+        }
         attron(A_BOLD);
         mvprintw(4, (width - 40) / 2, "Create New Account for '%s'", username.c_str());
         attroff(A_BOLD);
+        if (has_colors()) {
+            attroff(COLOR_PAIR(4));
+        }
+        
+        // Add instructions for new users
+        mvprintw(6, (width - 40) / 2, "Please choose a password for your account");
     } else {
+        if (has_colors()) {
+            attron(COLOR_PAIR(2)); // Green for returning users
+        }
         attron(A_BOLD);
         mvprintw(4, (width - 30) / 2, "Welcome Back, %s", username.c_str());
         attroff(A_BOLD);
+        if (has_colors()) {
+            attroff(COLOR_PAIR(2));
+        }
+        
+        // Add instructions for returning users
+        mvprintw(6, (width - 40) / 2, "Please enter your password to login");
     }
     
     FIELD *fields[3];
@@ -387,17 +442,29 @@ bool password_form(const std::string& username, bool is_new_user) {
     // Post the form
     post_form(form);
     
-    // Labels
+    // Labels with better styling
+    attron(A_BOLD);
     if (is_new_user) {
         mvprintw(8, (width - 30) / 2 - 15, "New Password:");
         mvprintw(10, (width - 30) / 2 - 15, "Confirm Password:");
     } else {
         mvprintw(8, (width - 30) / 2 - 15, "Password:");
     }
+    attroff(A_BOLD);
     
-    mvprintw(height - 4, 2, "Press F1 or Enter to submit");
-    mvprintw(height - 3, 2, "Press F2 to go back");
+    // Draw a horizontal separator line
+    for (int i = 2; i < width - 2; i++) {
+        mvaddch(height - 6, i, ACS_HLINE);
+    }
+    
+    // Instructions at the bottom
+    mvprintw(height - 4, 2, "Press Enter to submit");
+    mvprintw(height - 3, 2, "Press Esc to go back");
+    
     refresh();
+    
+    // Position cursor in first form field
+    form_driver(form, REQ_END_LINE);
     
     // Form navigation
     bool result = false;
@@ -405,7 +472,7 @@ bool password_form(const std::string& username, bool is_new_user) {
     while(true) {
         ch = getch();
         
-        if (ch == KEY_F(2)) {
+        if (ch == 27) { // Escape key
             // Go back to username form
             if (is_new_user) {
                 unpost_form(form);
@@ -419,7 +486,7 @@ bool password_form(const std::string& username, bool is_new_user) {
             }
             return false;
         }
-        else if (ch == KEY_F(1) || ch == 10) { // F1 or Enter key
+        else if (ch == 10) { // Enter key
             // Process form submission
             form_driver(form, REQ_VALIDATION);
             
@@ -440,6 +507,11 @@ bool password_form(const std::string& username, bool is_new_user) {
                     continue;
                 }
                 
+                // Show loading message
+                clear();
+                mvprintw(height/2, (width - 30)/2, "Creating account, please wait...");
+                refresh();
+                
                 // Send NEWUSER command to create account
                 std::string newuser_response = send_command_and_get_response("NEWUSER " + username);
                 
@@ -455,6 +527,11 @@ bool password_form(const std::string& username, bool is_new_user) {
                     return false;
                 }
                 
+                // Show loading message for login
+                clear();
+                mvprintw(height/2, (width - 30)/2, "Logging in, please wait...");
+                refresh();
+                
                 // Send USER command again
                 std::string user_response = send_command_and_get_response("USER " + username);
                 
@@ -463,12 +540,24 @@ bool password_form(const std::string& username, bool is_new_user) {
                 
                 // Check if login was successful
                 if (pass_response.find("230") != std::string::npos) {
+                    if (has_colors()) {
+                        attron(COLOR_PAIR(2)); // Green for success
+                    }
                     display_message_box("Account created and logged in successfully!");
+                    if (has_colors()) {
+                        attroff(COLOR_PAIR(2));
+                    }
                     is_authenticated = true;
                     current_user = username;
                     result = true;
                 } else {
+                    if (has_colors()) {
+                        attron(COLOR_PAIR(3)); // Red for errors
+                    }
                     display_message_box("Account created but login failed: " + pass_response);
+                    if (has_colors()) {
+                        attroff(COLOR_PAIR(3));
+                    }
                     result = false;
                 }
                 
@@ -486,6 +575,11 @@ bool password_form(const std::string& username, bool is_new_user) {
                 std::string password_str(password);
                 password_str.erase(password_str.find_last_not_of(" \n\r\t") + 1);
                 
+                // Show loading message
+                clear();
+                mvprintw(height/2, (width - 30)/2, "Logging in, please wait...");
+                refresh();
+                
                 // Send PASS command with password
                 std::string pass_response = send_command_and_get_response("PASS " + password_str);
                 
@@ -495,7 +589,13 @@ bool password_form(const std::string& username, bool is_new_user) {
                     current_user = username;
                     result = true;
                 } else {
+                    if (has_colors()) {
+                        attron(COLOR_PAIR(3)); // Red for errors
+                    }
                     display_message_box("Login failed: " + pass_response);
+                    if (has_colors()) {
+                        attroff(COLOR_PAIR(3));
+                    }
                     result = false;
                 }
                 
@@ -510,12 +610,14 @@ bool password_form(const std::string& username, bool is_new_user) {
             // Handle normal form navigation
             switch(ch) {
                 case KEY_DOWN:
+                case 9: // Tab key
                     if (is_new_user) { // Only allow field navigation for new users with multiple fields
                         form_driver(form, REQ_NEXT_FIELD);
                         form_driver(form, REQ_END_LINE);
                     }
                     break;
                 case KEY_UP:
+                case KEY_BTAB: // Shift-Tab (may not work on all terminals)
                     if (is_new_user) { // Only allow field navigation for new users with multiple fields
                         form_driver(form, REQ_PREV_FIELD);
                         form_driver(form, REQ_END_LINE);
@@ -550,16 +652,33 @@ void command_interface() {
     
     scrollok(output_win, TRUE);
     
-    // Draw borders
-    box(header_win, 0, 0);
-    box(output_win, 0, 0);
-    box(status_win, 0, 0);
-    box(input_win, 0, 0);
+    // Draw fancy borders
+    // Header window
+    wborder(header_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
+            ACS_ULCORNER, ACS_URCORNER, ACS_LTEE, ACS_RTEE);
+    
+    // Output window
+    wborder(output_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
+            ACS_LTEE, ACS_RTEE, ACS_LTEE, ACS_RTEE);
+    
+    // Status window
+    wborder(status_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
+            ACS_LTEE, ACS_RTEE, ACS_LTEE, ACS_RTEE);
+    
+    // Input window
+    wborder(input_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
+            ACS_LTEE, ACS_RTEE, ACS_LLCORNER, ACS_LRCORNER);
     
     // Add titles with highlighting
+    if (has_colors()) {
+        wattron(header_win, COLOR_PAIR(1));
+    }
     wattron(header_win, A_BOLD);
     mvwprintw(header_win, 1, max_x/2 - 15, "Game Rental System Terminal");
     wattroff(header_win, A_BOLD);
+    if (has_colors()) {
+        wattroff(header_win, COLOR_PAIR(1));
+    }
     
     wattron(output_win, A_BOLD);
     mvwprintw(output_win, 0, 2, " Server Output ");
@@ -573,18 +692,48 @@ void command_interface() {
     mvwprintw(input_win, 0, 2, " Command Input (type 'BYE' to logout) ");
     wattroff(input_win, A_BOLD);
     
-    // Display welcome message in header
+    // Display welcome message in header with user info
+    if (has_colors()) {
+        wattron(header_win, COLOR_PAIR(2)); // Green for user info
+    }
     mvwprintw(header_win, 1, 2, "User: %s", current_user.c_str());
+    if (has_colors()) {
+        wattroff(header_win, COLOR_PAIR(2));
+    }
+    
+    // Display server information on the right side
+    mvwprintw(header_win, 1, max_x - 25, "Server: Game Rental v1.0");
     
     // Display status information
     mvwprintw(status_win, 1, 2, "Connected to server - Type HELP for available commands");
     
+    // Display loading message
+    wattron(output_win, A_BOLD);
+    mvwprintw(output_win, 1, 1, "Loading game rental system, please wait...");
+    wrefresh(output_win);
+    
     // Get and display initial help
     std::string help_response = send_command_and_get_response("HELP");
+    
+    // Clear loading message
+    wmove(output_win, 1, 1);
+    wclrtoeol(output_win);
+    
+    // Draw fancy welcome message
+    if (has_colors()) {
+        wattron(output_win, COLOR_PAIR(2));
+    }
+    wattron(output_win, A_BOLD);
     mvwprintw(output_win, 1, 1, "Welcome, %s!", current_user.c_str());
+    wattroff(output_win, A_BOLD);
+    if (has_colors()) {
+        wattroff(output_win, COLOR_PAIR(2));
+    }
     
     // Print help response with proper formatting
-    int y = 2;
+    int y = 3;
+    mvwprintw(output_win, 2, 1, "Available commands:");
+    
     std::istringstream help_stream(help_response);
     std::string line;
     while (std::getline(help_stream, line) && y < max_y - 10) {
@@ -602,6 +751,7 @@ void command_interface() {
     char cmd_buf[256];
     int y_offset = y + 1; // Start output after welcome and help
     
+    // Position cursor in input field
     wmove(input_win, 1, 1);
     wrefresh(input_win);
     
@@ -615,7 +765,8 @@ void command_interface() {
         
         // Clear input window for next command
         wclear(input_win);
-        box(input_win, 0, 0);
+        wborder(input_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
+                ACS_LTEE, ACS_RTEE, ACS_LLCORNER, ACS_LRCORNER);
         wattron(input_win, A_BOLD);
         mvwprintw(input_win, 0, 2, " Command Input (type 'BYE' to logout) ");
         wattroff(input_win, A_BOLD);
@@ -624,30 +775,90 @@ void command_interface() {
         
         // Handle exit command
         if (command == "BYE" || command == "bye") {
+            // Show goodbye message
+            wclear(output_win);
+            wborder(output_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
+                    ACS_LTEE, ACS_RTEE, ACS_LTEE, ACS_RTEE);
+            wattron(output_win, A_BOLD);
+            mvwprintw(output_win, 0, 2, " Server Output ");
+            wattroff(output_win, A_BOLD);
+            
+            if (has_colors()) {
+                wattron(output_win, COLOR_PAIR(4)); // Yellow for goodbye
+            }
+            mvwprintw(output_win, max_y/2 - 5, max_x/2 - 10, "Logging out...");
+            wrefresh(output_win);
+            
+            // Send BYE command
             send_command_and_get_response("BYE");
+            
+            // Show final message
+            wclear(output_win);
+            wborder(output_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
+                    ACS_LTEE, ACS_RTEE, ACS_LTEE, ACS_RTEE);
+            wattron(output_win, A_BOLD);
+            mvwprintw(output_win, 0, 2, " Server Output ");
+            wattroff(output_win, A_BOLD);
+            
+            mvwprintw(output_win, max_y/2 - 5, max_x/2 - 15, "Thank you for using Game Rental System!");
+            mvwprintw(output_win, max_y/2 - 3, max_x/2 - 10, "Goodbye, %s!", current_user.c_str());
+            if (has_colors()) {
+                wattroff(output_win, COLOR_PAIR(4));
+            }
+            wrefresh(output_win);
+            napms(1500); // Show goodbye message for 1.5 seconds
             break;
         }
         
         // Update status based on command
         wclear(status_win);
-        box(status_win, 0, 0);
+        wborder(status_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
+                ACS_LTEE, ACS_RTEE, ACS_LTEE, ACS_RTEE);
         wattron(status_win, A_BOLD);
         mvwprintw(status_win, 0, 2, " Status ");
         wattroff(status_win, A_BOLD);
         
         if (command == "BROWSE" || command == "browse") {
+            if (has_colors()) {
+                wattron(status_win, COLOR_PAIR(4)); // Yellow for mode
+            }
             mvwprintw(status_win, 1, 2, "MODE: BROWSE - View and search the game catalog");
+            if (has_colors()) {
+                wattroff(status_win, COLOR_PAIR(4));
+            }
         } else if (command == "RENT" || command == "rent") {
+            if (has_colors()) {
+                wattron(status_win, COLOR_PAIR(4)); // Yellow for mode
+            }
             mvwprintw(status_win, 1, 2, "MODE: RENT - Check out and return games");
+            if (has_colors()) {
+                wattroff(status_win, COLOR_PAIR(4));
+            }
         } else if (command == "MYGAMES" || command == "mygames") {
+            if (has_colors()) {
+                wattron(status_win, COLOR_PAIR(4)); // Yellow for mode
+            }
             mvwprintw(status_win, 1, 2, "MODE: MYGAMES - View history and recommendations");
+            if (has_colors()) {
+                wattroff(status_win, COLOR_PAIR(4));
+            }
         } else {
             mvwprintw(status_win, 1, 2, "Processing command: %s", command.c_str());
         }
         wrefresh(status_win);
         
-        // Send command to server
+        // Send command to server with visual feedback
+        mvwprintw(status_win, 1, max_x - 20, "Sending...");
+        wrefresh(status_win);
         std::string response = send_command_and_get_response(command);
+        wclear(status_win);
+        wborder(status_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
+                ACS_LTEE, ACS_RTEE, ACS_LTEE, ACS_RTEE);
+        wattron(status_win, A_BOLD);
+        mvwprintw(status_win, 0, 2, " Status ");
+        wattroff(status_win, A_BOLD);
+        mvwprintw(status_win, 1, 2, "Response received");
+        wrefresh(status_win);
         
         // Display command with highlight
         wattron(output_win, A_BOLD | A_REVERSE);
