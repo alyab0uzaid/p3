@@ -246,9 +246,9 @@ bool username_form() {
     box(stdscr, 0, 0);
     refresh();
     
-    // Calculate centered positions
-    int form_width = 50;
-    int form_height = 12;
+    // Calculate centered positions - make the form wider
+    int form_width = 70;  // Increased from 50 to 70
+    int form_height = 14; // Increased from 12 to 14
     int start_x = (width - form_width) / 2;
     int start_y = (height - form_height) / 2;
     
@@ -272,8 +272,8 @@ bool username_form() {
     // Username field with box
     mvwprintw(form_win, 6, 5, "Username:");
     
-    // Draw input box instead of underline
-    WINDOW* input_win = derwin(form_win, 3, 30, 5, 15);
+    // Draw input box instead of underline - make it wider
+    WINDOW* input_win = derwin(form_win, 3, 40, 5, 15);
     box(input_win, 0, 0);
     
     // Instructions at the bottom
@@ -391,7 +391,7 @@ bool username_form() {
                 wrefresh(input_win);
             }
         }
-        else if (pos < 28 && ch >= 32 && ch <= 126) { // Printable characters (limit to 28 for border)
+        else if (pos < 38 && ch >= 32 && ch <= 126) { // Printable characters - increased limit for wider boxes
             // Store character and display it
             username[pos] = ch;
             wmove(input_win, 1, 1 + pos);
@@ -419,9 +419,9 @@ bool password_form(const std::string& username, bool is_new_user) {
     box(stdscr, 0, 0);
     refresh();
     
-    // Calculate centered positions
-    int form_width = 60;
-    int form_height = is_new_user ? 16 : 12; // Taller form for new users (need confirm field)
+    // Calculate centered positions - make the form wider and taller
+    int form_width = 70;  // Increased width
+    int form_height = is_new_user ? 18 : 14; // Increased height
     int start_x = (width - form_width) / 2;
     int start_y = (height - form_height) / 2;
     
@@ -456,8 +456,8 @@ bool password_form(const std::string& username, bool is_new_user) {
     // Password field with box
     mvwprintw(form_win, 8, 5, "Password:");
     
-    // Draw input box instead of underline
-    WINDOW* pass_win = derwin(form_win, 3, 30, 7, 15);
+    // Draw input box instead of underline - make it wider
+    WINDOW* pass_win = derwin(form_win, 3, 40, 7, 15);
     box(pass_win, 0, 0);
     
     // Confirm password field for new users
@@ -465,8 +465,8 @@ bool password_form(const std::string& username, bool is_new_user) {
     if (is_new_user) {
         mvwprintw(form_win, 11, 5, "Confirm:");
         
-        // Draw input box for confirm password
-        confirm_win = derwin(form_win, 3, 30, 10, 15);
+        // Draw input box for confirm password - make it wider
+        confirm_win = derwin(form_win, 3, 40, 10, 15);
         box(confirm_win, 0, 0);
     }
     
@@ -566,7 +566,7 @@ bool password_form(const std::string& username, bool is_new_user) {
                             wrefresh(confirm_win);
                         }
                     }
-                    else if (pos < 28 && ch >= 32 && ch <= 126) { // Printable characters
+                    else if (pos < 38 && ch >= 32 && ch <= 126) { // Printable characters - increased limit for wider boxes
                         confirm[pos] = ch;
                         // Show asterisk instead of character
                         wmove(confirm_win, 1, 1 + pos);
@@ -641,24 +641,69 @@ bool password_form(const std::string& username, bool is_new_user) {
                 
                 // Check if password was set successfully
                 if (pass_response.find("230") != std::string::npos) {
-                    clear();
-                    box(stdscr, 0, 0);
-                    mvprintw(10, 10, "Account created successfully!");
-                    mvprintw(11, 10, "Welcome to the Game Rental System!");
-                    mvprintw(13, 10, "Press any key to continue...");
-                    refresh();
-                    getch();
+                    // Clean up the message window
+                    delwin(msg_win);
+                    
+                    // Create a nicer success message box
+                    WINDOW* success_win = newwin(10, 50, (height - 10) / 2, (width - 50) / 2);
+                    box(success_win, 0, 0);
+                    
+                    // Add title with inverse colors for emphasis
+                    wattron(success_win, A_BOLD);
+                    if (has_colors()) {
+                        wattron(success_win, COLOR_PAIR(2)); // Green for success
+                    }
+                    mvwprintw(success_win, 0, (50 - 17) / 2, " SUCCESS ");
+                    if (has_colors()) {
+                        wattroff(success_win, COLOR_PAIR(2));
+                    }
+                    wattroff(success_win, A_BOLD);
+                    
+                    // Success messages
+                    mvwprintw(success_win, 3, (50 - 26) / 2, "Account created successfully!");
+                    mvwprintw(success_win, 5, (50 - 32) / 2, "Welcome to the Game Rental System!");
+                    mvwprintw(success_win, 8, (50 - 26) / 2, "Press any key to continue...");
+                    
+                    wrefresh(success_win);
+                    wgetch(success_win);
+                    delwin(success_win);
                     
                     is_authenticated = true;
                     current_user = username;
                     return true;
                 } else {
-                    clear();
-                    box(stdscr, 0, 0);
-                    mvprintw(10, 10, "Account creation failed: %s", pass_response.c_str());
-                    mvprintw(12, 10, "Press any key to continue...");
-                    refresh();
-                    getch();
+                    // Clean up the message window
+                    delwin(msg_win);
+                    
+                    // Create an error message box
+                    WINDOW* error_win = newwin(10, 60, (height - 10) / 2, (width - 60) / 2);
+                    box(error_win, 0, 0);
+                    
+                    // Add title with error colors
+                    wattron(error_win, A_BOLD);
+                    if (has_colors()) {
+                        wattron(error_win, COLOR_PAIR(3)); // Red for error
+                    }
+                    mvwprintw(error_win, 0, (60 - 16) / 2, " ERROR ");
+                    if (has_colors()) {
+                        wattroff(error_win, COLOR_PAIR(3));
+                    }
+                    wattroff(error_win, A_BOLD);
+                    
+                    // Error message - word wrap if needed
+                    std::string error_msg = "Account creation failed: " + pass_response;
+                    if (error_msg.length() > 50) {
+                        mvwprintw(error_win, 3, 5, "%s", error_msg.substr(0, 50).c_str());
+                        mvwprintw(error_win, 4, 5, "%s", error_msg.substr(50).c_str());
+                    } else {
+                        mvwprintw(error_win, 3, (60 - error_msg.length()) / 2, "%s", error_msg.c_str());
+                    }
+                    
+                    mvwprintw(error_win, 8, (60 - 26) / 2, "Press any key to continue...");
+                    
+                    wrefresh(error_win);
+                    wgetch(error_win);
+                    delwin(error_win);
                     return false;
                 }
             } else {
@@ -667,13 +712,33 @@ bool password_form(const std::string& username, bool is_new_user) {
                 
                 // Check if login was successful
                 if (pass_response.find("230") != std::string::npos) {
-                    clear();
-                    box(stdscr, 0, 0);
-                    mvprintw(10, 10, "Login successful!");
-                    mvprintw(11, 10, "Welcome back to the Game Rental System!");
-                    mvprintw(13, 10, "Press any key to continue...");
-                    refresh();
-                    getch();
+                    // Clean up existing windows
+                    delwin(pass_win);
+                    delwin(form_win);
+                    
+                    // Create a nicer success message box
+                    WINDOW* success_win = newwin(10, 50, (height - 10) / 2, (width - 50) / 2);
+                    box(success_win, 0, 0);
+                    
+                    // Add title with inverse colors for emphasis
+                    wattron(success_win, A_BOLD);
+                    if (has_colors()) {
+                        wattron(success_win, COLOR_PAIR(2)); // Green for success
+                    }
+                    mvwprintw(success_win, 0, (50 - 17) / 2, " SUCCESS ");
+                    if (has_colors()) {
+                        wattroff(success_win, COLOR_PAIR(2));
+                    }
+                    wattroff(success_win, A_BOLD);
+                    
+                    // Success messages
+                    mvwprintw(success_win, 3, (50 - 16) / 2, "Login successful!");
+                    mvwprintw(success_win, 5, (50 - 37) / 2, "Welcome back to the Game Rental System!");
+                    mvwprintw(success_win, 8, (50 - 26) / 2, "Press any key to continue...");
+                    
+                    wrefresh(success_win);
+                    wgetch(success_win);
+                    delwin(success_win);
                     
                     is_authenticated = true;
                     current_user = username;
@@ -682,24 +747,29 @@ bool password_form(const std::string& username, bool is_new_user) {
                     // Password is incorrect - clear field and show red error message
                     
                     // Clear password field
-                    for (int i = 0; i < 30; i++) {
-                        mvaddch(9, 15 + i, '_');
-                    }
+                    werase(pass_win);
+                    box(pass_win, 0, 0);
+                    wrefresh(pass_win);
                     pos = 0; // Reset cursor position
                     
-                    // Show error in red
+                    // Show error in red in a designated area
                     if (has_colors()) {
-                        attron(COLOR_PAIR(3)); // Red text for error
+                        wattron(form_win, COLOR_PAIR(3)); // Red text for error
                     }
-                    mvprintw(13, 5, "Incorrect password. Please try again.");
+                    // Clear any previous message first
+                    for (int i = 0; i < form_width - 10; i++) {
+                        mvwaddch(form_win, form_height - 5, 5 + i, ' ');
+                    }
+                    // Then add the new message centered
+                    mvwprintw(form_win, form_height - 5, (form_width - 36) / 2, "Incorrect password. Please try again.");
                     if (has_colors()) {
-                        attroff(COLOR_PAIR(3));
+                        wattroff(form_win, COLOR_PAIR(3));
                     }
-                    refresh();
+                    wrefresh(form_win);
                     
                     // Move cursor back to password field
-                    move(9, 15);
-                    refresh();
+                    wmove(pass_win, 1, 1);
+                    wrefresh(pass_win);
                     
                     // Continue the input loop (return to password entry)
                     continue;
@@ -717,7 +787,7 @@ bool password_form(const std::string& username, bool is_new_user) {
                 wrefresh(pass_win);
             }
         }
-        else if (pos < 28 && ch >= 32 && ch <= 126) { // Printable characters
+        else if (pos < 38 && ch >= 32 && ch <= 126) { // Printable characters - increased limit for wider boxes
             password[pos] = ch;
             // Show asterisk instead of character
             wmove(pass_win, 1, 1 + pos);
