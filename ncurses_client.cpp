@@ -238,39 +238,50 @@ bool username_form() {
     clear();
     refresh();
     
-    // Create a simple border
+    // Get screen dimensions
+    int height, width;
+    getmaxyx(stdscr, height, width);
+    
+    // Create a main border
     box(stdscr, 0, 0);
     refresh();
     
-    // Print title using basic text
-    attron(A_BOLD);
-    mvprintw(2, 5, "GAME RENTAL SYSTEM");
-    attroff(A_BOLD);
-    refresh();
+    // Calculate centered positions
+    int form_width = 50;
+    int form_height = 12;
+    int start_x = (width - form_width) / 2;
+    int start_y = (height - form_height) / 2;
     
-    // Print login instructions directly
-    mvprintw(4, 5, "PLEASE LOGIN OR CREATE AN ACCOUNT");
-    refresh();
+    // Create centered form window with border
+    WINDOW* form_win = newwin(form_height, form_width, start_y, start_x);
+    box(form_win, 0, 0);
     
-    // Basic instructions with immediate refresh
-    mvprintw(5, 5, "Enter your username to login or create a new account");
-    refresh();
+    // Print title using bold centered text
+    wattron(form_win, A_BOLD);
+    mvwprintw(form_win, 0, (form_width - 19) / 2, " GAME RENTAL SYSTEM ");
+    wattroff(form_win, A_BOLD);
     
-    // Label for input field
-    attron(A_BOLD);
-    mvprintw(7, 5, "Username:");
-    attroff(A_BOLD);
-    refresh();
+    // Print login instructions centered
+    wattron(form_win, A_BOLD);
+    mvwprintw(form_win, 2, (form_width - 30) / 2, "PLEASE LOGIN OR CREATE AN ACCOUNT");
+    wattroff(form_win, A_BOLD);
     
-    // Draw underline for input field
-    for (int i = 0; i < 30; i++) {
-        mvaddch(7, 15 + i, '_');
-    }
-    refresh();
+    // Basic instructions centered
+    mvwprintw(form_win, 4, (form_width - 47) / 2, "Enter your username to login or create a new account");
+    
+    // Username field with box
+    mvwprintw(form_win, 6, 5, "Username:");
+    
+    // Draw input box instead of underline
+    WINDOW* input_win = derwin(form_win, 3, 30, 5, 15);
+    box(input_win, 0, 0);
     
     // Instructions at the bottom
-    mvprintw(20, 5, "Press ENTER to continue or ESC to exit");
-    refresh();
+    mvwprintw(form_win, form_height - 2, (form_width - 36) / 2, "Press ENTER to continue or ESC to exit");
+    
+    // Refresh both windows
+    wrefresh(form_win);
+    wrefresh(input_win);
     
     // Direct terminal input without forms
     char username[31] = {0}; // 30 chars + null terminator
@@ -278,17 +289,20 @@ bool username_form() {
     int ch;
     bool result = false;
     
-    // Position cursor at start of input field
-    move(7, 15);
+    // Position cursor at start of input field inside the input box (accounting for border)
+    wmove(input_win, 1, 1);
     curs_set(1); // Make cursor visible
+    keypad(input_win, TRUE); // Enable special keys
     echo(); // Show typing
-    refresh();
+    wrefresh(input_win);
     
     // Input loop
     while (true) {
-        ch = getch();
+        ch = wgetch(input_win);
         
         if (ch == 27) { // Escape key
+            delwin(input_win);
+            delwin(form_win);
             return false;
         }
         else if (ch == 10) { // Enter key
@@ -304,28 +318,28 @@ bool username_form() {
             }
             
             if (username_str.empty()) {
-                mvprintw(9, 5, "Username cannot be empty. Please enter a username.");
-                move(7, 15 + pos); // Move cursor back to input position
-                refresh();
+                // Show error in red in the form window
+                if (has_colors()) {
+                    wattron(form_win, COLOR_PAIR(3)); // Red text for error
+                }
+                mvwprintw(form_win, 8, (form_width - 45) / 2, "Username cannot be empty. Please enter a username.");
+                if (has_colors()) {
+                    wattroff(form_win, COLOR_PAIR(3));
+                }
+                wrefresh(form_win);
+                
+                // Move cursor back to input position
+                wmove(input_win, 1, 1 + pos);
+                wrefresh(input_win);
                 continue;
             }
             
-            // Show checking message
-            mvprintw(9, 5, "Checking username...                                  ");
-            refresh();
+            // Show checking message in the form window
+            mvwprintw(form_win, 8, (form_width - 20) / 2, "Checking username...");
+            wrefresh(form_win);
             
             // Send USER command to check if user exists
             std::string user_response = send_command_and_get_response("USER " + username_str);
-            
-            // Debug screen
-            clear();
-            box(stdscr, 0, 0);
-            attron(A_BOLD);
-            mvprintw(2, 5, "USER DETECTION DEBUG");
-            attroff(A_BOLD);
-            
-            mvprintw(4, 5, "Username: %s", username_str.c_str());
-            mvprintw(6, 5, "Server Response: %s", user_response.c_str());
             
             // COMPLETELY RESTRUCTURED USER DETECTION LOGIC
             // Extract the response code if possible (first 3 digits)
@@ -353,25 +367,14 @@ bool username_form() {
             }
             // If neither pattern matches, default to treating as new user
             
-            bool is_existing_user = !is_new_user;
+            // bool is_existing_user = !is_new_user; // Uncomment if needed
             
-            // Print detailed debug info
-            mvprintw(8, 5, "Extracted code: '%s'", response_code.c_str());
-            mvprintw(10, 5, "DECISION LOGIC:");
-            mvprintw(11, 5, "- If message contains 'User name okay': Existing user");
-            mvprintw(12, 5, "- If message contains 'New user': New user");
-            mvprintw(13, 5, "- Otherwise: Default to new user");
+            // We can remove the debug info in the final version
+            // Now just clean up windows and proceed to the appropriate form
             
-            attron(A_BOLD);
-            mvprintw(14, 5, "RESULT:");
-            mvprintw(15, 5, "User exists? %s", is_existing_user ? "YES" : "NO");
-            mvprintw(16, 5, "New user? %s", is_new_user ? "YES" : "NO");
-            mvprintw(17, 5, "Will show: %s", is_new_user ? "CREATE NEW ACCOUNT" : "LOGIN FORM");
-            attroff(A_BOLD);
-            
-            mvprintw(19, 5, "Press any key to continue...");
-            refresh();
-            getch();
+            // Clean up the windows before proceeding
+            delwin(input_win);
+            delwin(form_win);
             
             // Show password form with correct user type
             result = password_form(username_str, is_new_user);
@@ -380,21 +383,22 @@ bool username_form() {
         else if (ch == KEY_BACKSPACE || ch == 127) { // Backspace
             if (pos > 0) {
                 pos--;
-                // Move cursor back and replace with underscore
-                move(7, 15 + pos);
-                addch('_');
+                // Move cursor back and replace with space
+                wmove(input_win, 1, 1 + pos);
+                waddch(input_win, ' ');
                 // Position cursor at the correct spot
-                move(7, 15 + pos);
-                refresh();
+                wmove(input_win, 1, 1 + pos);
+                wrefresh(input_win);
             }
         }
-        else if (pos < 30 && ch >= 32 && ch <= 126) { // Printable characters
+        else if (pos < 28 && ch >= 32 && ch <= 126) { // Printable characters (limit to 28 for border)
             // Store character and display it
             username[pos] = ch;
-            mvaddch(7, 15 + pos, ch);
+            wmove(input_win, 1, 1 + pos);
+            waddch(input_win, ch);
             pos++;
-            move(7, 15 + pos); // Move cursor to next position
-            refresh();
+            wmove(input_win, 1, 1 + pos); // Move cursor to next position
+            wrefresh(input_win);
         }
     }
     
@@ -407,67 +411,78 @@ bool password_form(const std::string& username, bool is_new_user) {
     clear();
     refresh();
     
-    // Simple border
+    // Get screen dimensions
+    int height, width;
+    getmaxyx(stdscr, height, width);
+    
+    // Create a main border
     box(stdscr, 0, 0);
     refresh();
     
-    // Basic title
-    attron(A_BOLD);
-    mvprintw(2, 5, "GAME RENTAL SYSTEM");
-    attroff(A_BOLD);
-    refresh();
+    // Calculate centered positions
+    int form_width = 60;
+    int form_height = is_new_user ? 16 : 12; // Taller form for new users (need confirm field)
+    int start_x = (width - form_width) / 2;
+    int start_y = (height - form_height) / 2;
+    
+    // Create centered form window with border
+    WINDOW* form_win = newwin(form_height, form_width, start_y, start_x);
+    box(form_win, 0, 0);
+    
+    // Print title using bold centered text
+    wattron(form_win, A_BOLD);
+    mvwprintw(form_win, 0, (form_width - 19) / 2, " GAME RENTAL SYSTEM ");
+    wattroff(form_win, A_BOLD);
     
     // User status with better messages for new users
-    attron(A_BOLD);
+    wattron(form_win, A_BOLD);
     if (is_new_user) {
-        mvprintw(4, 5, "CREATE NEW ACCOUNT");
-        mvprintw(5, 5, "Welcome, %s! You're creating a new account.", username.c_str());
+        mvwprintw(form_win, 2, (form_width - 16) / 2, "CREATE NEW ACCOUNT");
+        mvwprintw(form_win, 3, (form_width - 45) / 2, "Welcome, %s! You're creating a new account.", username.c_str());
     } else {
-        mvprintw(4, 5, "USER LOGIN");
-        mvprintw(5, 5, "Welcome back, %s! Please enter your password.", username.c_str());
+        mvwprintw(form_win, 2, (form_width - 10) / 2, "USER LOGIN");
+        mvwprintw(form_win, 3, (form_width - 45) / 2, "Welcome back, %s! Please enter your password.", username.c_str());
     }
-    attroff(A_BOLD);
-    refresh();
+    wattroff(form_win, A_BOLD);
     
-    // Instructions with more details
+    // Instructions with more details - centered
     if (is_new_user) {
-        mvprintw(7, 5, "Please choose a password for your new account");
-        mvprintw(8, 5, "(You'll need to enter it twice for verification)");
+        mvwprintw(form_win, 5, (form_width - 43) / 2, "Please choose a password for your new account");
+        mvwprintw(form_win, 6, (form_width - 40) / 2, "(You'll need to enter it twice for verification)");
     } else {
-        mvprintw(7, 5, "Please enter your password to log in");
+        mvwprintw(form_win, 5, (form_width - 33) / 2, "Please enter your password to log in");
     }
-    refresh();
     
-    // Password label
-    attron(A_BOLD);
-    mvprintw(9, 5, "Password:");
-    attroff(A_BOLD);
+    // Password field with box
+    mvwprintw(form_win, 8, 5, "Password:");
     
-    // Draw underline for password field
-    for (int i = 0; i < 30; i++) {
-        mvaddch(9, 15 + i, '_');
-    }
-    refresh();
+    // Draw input box instead of underline
+    WINDOW* pass_win = derwin(form_win, 3, 30, 7, 15);
+    box(pass_win, 0, 0);
     
     // Confirm password field for new users
+    WINDOW* confirm_win = NULL;
     if (is_new_user) {
-        attron(A_BOLD);
-        mvprintw(11, 5, "Confirm:");
-        attroff(A_BOLD);
+        mvwprintw(form_win, 11, 5, "Confirm:");
         
-        for (int i = 0; i < 30; i++) {
-            mvaddch(11, 15 + i, '_');
-        }
-        refresh();
+        // Draw input box for confirm password
+        confirm_win = derwin(form_win, 3, 30, 10, 15);
+        box(confirm_win, 0, 0);
     }
     
-    // Instructions at the bottom
+    // Instructions at the bottom - centered
     if (is_new_user) {
-        mvprintw(15, 5, "Press ENTER to create account or ESC to go back");
+        mvwprintw(form_win, form_height - 2, (form_width - 43) / 2, "Press ENTER to create account or ESC to go back");
     } else {
-        mvprintw(15, 5, "Press ENTER to login or ESC to go back");
+        mvwprintw(form_win, form_height - 2, (form_width - 36) / 2, "Press ENTER to login or ESC to go back");
     }
-    refresh();
+    
+    // Refresh all windows
+    wrefresh(form_win);
+    wrefresh(pass_win);
+    if (is_new_user && confirm_win) {
+        wrefresh(confirm_win);
+    }
     
     // Direct input for password
     char password[31] = {0}; // 30 chars + null terminator
@@ -475,27 +490,42 @@ bool password_form(const std::string& username, bool is_new_user) {
     int pos = 0;
     int ch;
     
-    // Position cursor at start of password field
-    move(9, 15);
+    // Position cursor at start of password field inside the input box
+    wmove(pass_win, 1, 1);
     curs_set(1); // Make cursor visible
+    keypad(pass_win, TRUE); // Enable special keys
     noecho(); // Don't show password characters
-    refresh();
+    wrefresh(pass_win);
     
     // Input loop for password
     while (true) {
-        ch = getch();
+        ch = wgetch(pass_win);
         
         if (ch == 27) { // Escape key
+            delwin(pass_win);
+            if (is_new_user && confirm_win) {
+                delwin(confirm_win);
+            }
+            delwin(form_win);
             return false;
         }
         else if (ch == 10) { // Enter key
             password[pos] = '\0'; // Ensure null termination
             
             if (pos == 0) {
-                // Empty password
-                mvprintw(13, 5, "Password cannot be empty. Please enter a password.");
-                move(9, 15);
-                refresh();
+                // Empty password - show error in red
+                if (has_colors()) {
+                    wattron(form_win, COLOR_PAIR(3)); // Red text for error
+                }
+                mvwprintw(form_win, is_new_user ? 13 : 10, (form_width - 47) / 2, "Password cannot be empty. Please enter a password.");
+                if (has_colors()) {
+                    wattroff(form_win, COLOR_PAIR(3));
+                }
+                wrefresh(form_win);
+                
+                // Move cursor back to password field
+                wmove(pass_win, 1, 1);
+                wrefresh(pass_win);
                 continue;
             }
             
@@ -503,20 +533,22 @@ bool password_form(const std::string& username, bool is_new_user) {
                 // Now get confirmation password
                 pos = 0;
                 
-                // Clear any previous message
-                move(13, 5);
-                clrtoeol();
-                refresh();
+                // Clear any previous error message
+                mvwprintw(form_win, 13, 2, "                                                      ");
+                wrefresh(form_win);
                 
                 // Move to confirmation field
-                move(11, 15);
-                refresh();
+                wmove(confirm_win, 1, 1);
+                wrefresh(confirm_win);
                 
                 // Input loop for confirm password
                 while (true) {
-                    ch = getch();
+                    ch = wgetch(confirm_win);
                     
                     if (ch == 27) { // Escape key
+                        delwin(pass_win);
+                        delwin(confirm_win);
+                        delwin(form_win);
                         return false;
                     }
                     else if (ch == 10) { // Enter key
@@ -526,45 +558,68 @@ bool password_form(const std::string& username, bool is_new_user) {
                     else if (ch == KEY_BACKSPACE || ch == 127) { // Backspace
                         if (pos > 0) {
                             pos--;
-                            // Replace with underscore
-                            move(11, 15 + pos);
-                            addch('_');
+                            // Replace with space
+                            wmove(confirm_win, 1, 1 + pos);
+                            waddch(confirm_win, ' ');
                             // Position cursor correctly
-                            move(11, 15 + pos);
-                            refresh();
+                            wmove(confirm_win, 1, 1 + pos);
+                            wrefresh(confirm_win);
                         }
                     }
-                    else if (pos < 30 && ch >= 32 && ch <= 126) { // Printable characters
+                    else if (pos < 28 && ch >= 32 && ch <= 126) { // Printable characters
                         confirm[pos] = ch;
                         // Show asterisk instead of character
-                        mvaddch(11, 15 + pos, '*');
+                        wmove(confirm_win, 1, 1 + pos);
+                        waddch(confirm_win, '*');
                         pos++;
-                        move(11, 15 + pos);
-                        refresh();
+                        wmove(confirm_win, 1, 1 + pos);
+                        wrefresh(confirm_win);
                     }
                 }
                 
                 // Check if passwords match
                 if (strcmp(password, confirm) != 0) {
-                    mvprintw(13, 5, "Passwords do not match. Please try again.");
-                    refresh();
+                    // Show error in red
+                    if (has_colors()) {
+                        wattron(form_win, COLOR_PAIR(3)); // Red text for error
+                    }
+                    mvwprintw(form_win, 13, (form_width - 40) / 2, "Passwords do not match. Please try again.");
+                    if (has_colors()) {
+                        wattroff(form_win, COLOR_PAIR(3));
+                    }
+                    wrefresh(form_win);
                     
                     // Clear password fields
-                    for (int i = 0; i < 30; i++) {
-                        mvaddch(9, 15 + i, '_');
-                        mvaddch(11, 15 + i, '_');
-                    }
+                    werase(pass_win);
+                    box(pass_win, 0, 0);
+                    wrefresh(pass_win);
+                    
+                    werase(confirm_win);
+                    box(confirm_win, 0, 0);
+                    wrefresh(confirm_win);
+                    
+                    // Reset position and move to first password field
                     pos = 0;
-                    move(9, 15);
-                    refresh();
+                    wmove(pass_win, 1, 1);
+                    wrefresh(pass_win);
                     continue;
                 }
                 
-                // Show processing message
-                clear();
-                box(stdscr, 0, 0);
-                mvprintw(10, 10, "Creating your new account...");
-                refresh();
+                // Show processing message in a centered box
+                // First clean up password input windows
+                delwin(pass_win);
+                delwin(confirm_win);
+                delwin(form_win);
+                
+                // Create new message box
+                WINDOW* msg_win = newwin(7, 40, (height - 7) / 2, (width - 40) / 2);
+                box(msg_win, 0, 0);
+                wattron(msg_win, A_BOLD);
+                mvwprintw(msg_win, 0, (40 - 14) / 2, " Processing ");
+                wattroff(msg_win, A_BOLD);
+                
+                mvwprintw(msg_win, 3, (40 - 25) / 2, "Creating your new account...");
+                wrefresh(msg_win);
                 
                 // For account creation, we just use USER and PASS
                 // The server detects new users automatically and handles it
@@ -654,21 +709,22 @@ bool password_form(const std::string& username, bool is_new_user) {
         else if (ch == KEY_BACKSPACE || ch == 127) { // Backspace
             if (pos > 0) {
                 pos--;
-                // Replace with underscore
-                move(9, 15 + pos);
-                addch('_');
+                // Replace with space
+                wmove(pass_win, 1, 1 + pos);
+                waddch(pass_win, ' ');
                 // Position cursor correctly
-                move(9, 15 + pos);
-                refresh();
+                wmove(pass_win, 1, 1 + pos);
+                wrefresh(pass_win);
             }
         }
-        else if (pos < 30 && ch >= 32 && ch <= 126) { // Printable characters
+        else if (pos < 28 && ch >= 32 && ch <= 126) { // Printable characters
             password[pos] = ch;
             // Show asterisk instead of character
-            mvaddch(9, 15 + pos, '*');
+            wmove(pass_win, 1, 1 + pos);
+            waddch(pass_win, '*');
             pos++;
-            move(9, 15 + pos);
-            refresh();
+            wmove(pass_win, 1, 1 + pos);
+            wrefresh(pass_win);
         }
     }
     
