@@ -1441,36 +1441,331 @@ void command_interface() {
                                 
                                 search_query = search_buf;
                                 if (!search_query.empty()) {
-                                    // Execute search and parse results
-                                    std::string results = send_command_and_get_response("SEARCH " + search_query);
+                                    // Execute search and display results directly
+                                    std::string search_results = send_command_and_get_response("SEARCH " + search_query);
                                     
-                                    // Store full response for display
-                                    response_text = results;
-                                    
-                                    // Parse results into game list
+                                    // Clear game list before adding new entries
                                     game_list.clear();
-                                    std::istringstream iss(results);
-                                    std::string result_line;
-                                    while (std::getline(iss, result_line)) {
-                                        // Add any non-empty line that looks like a game title
-                                        if (!result_line.empty() && 
-                                            result_line[0] != '-' && result_line[0] != '2' && 
-                                            result_line.find(':') == std::string::npos) {
-                                            game_list.push_back(result_line);
+                                    
+                                    // Parse and store all lines first
+                                    std::vector<std::string> all_search_lines;
+                                    std::istringstream search_iss(search_results);
+                                    std::string search_line;
+                                    
+                                    // Process all lines and build game list
+                                    while (std::getline(search_iss, search_line)) {
+                                        all_search_lines.push_back(search_line);
+                                        
+                                        // Add game titles to the game list for possible selection
+                                        if (!search_line.empty() && 
+                                            search_line[0] != '-' && !isdigit(search_line[0]) && 
+                                            search_line.find(':') == std::string::npos) {
+                                            game_list.push_back(search_line);
                                         }
                                     }
                                     
-                                    list_selection = 0;
-                                    current_level = SEARCH_RESULTS;
+                                    // Create a scrollable display with paging
+                                    int current_page = 0;
+                                    int lines_per_page = height - 10; // Leave room for header and footer
+                                    int total_pages = (all_search_lines.size() + lines_per_page - 1) / lines_per_page;
+                                    
+                                    bool search_done = false;
+                                    while (!search_done) {
+                                        clear();
+                                        box(stdscr, 0, 0);
+                                        
+                                        // Title
+                                        attron(A_BOLD);
+                                        if (has_colors()) {
+                                            attron(COLOR_PAIR(4)); // Yellow for title
+                                        }
+                                        mvprintw(1, (width - 20) / 2, "SEARCH RESULTS FOR: ");
+                                        if (has_colors()) {
+                                            attroff(COLOR_PAIR(4));
+                                        }
+                                        attroff(A_BOLD);
+                                        
+                                        // Display search query
+                                        if (has_colors()) {
+                                            attron(COLOR_PAIR(3)); // Red for search term
+                                        }
+                                        mvprintw(1, (width + 20) / 2, "\"%s\"", search_query.c_str());
+                                        if (has_colors()) {
+                                            attroff(COLOR_PAIR(3));
+                                        }
+                                        
+                                        // Show page info
+                                        mvprintw(2, (width - 20) / 2, "Page %d of %d", current_page + 1, total_pages > 0 ? total_pages : 1);
+                                        
+                                        // Display the current page of results
+                                        int start_idx = current_page * lines_per_page;
+                                        int end_idx = std::min(start_idx + lines_per_page, (int)all_search_lines.size());
+                                        
+                                        for (int i = start_idx, line = 4; i < end_idx; i++, line++) {
+                                            // Format status codes differently
+                                            if (all_search_lines[i].length() >= 3 && isdigit(all_search_lines[i][0]) && 
+                                                isdigit(all_search_lines[i][1]) && isdigit(all_search_lines[i][2])) {
+                                                if (has_colors()) {
+                                                    attron(COLOR_PAIR(2)); // Green for status
+                                                }
+                                                mvprintw(line, 2, "Status: %s", all_search_lines[i].c_str());
+                                                if (has_colors()) {
+                                                    attroff(COLOR_PAIR(2));
+                                                }
+                                            } 
+                                            // Format game titles with bullet points
+                                            else if (!all_search_lines[i].empty() && 
+                                                    all_search_lines[i][0] != '-' && !isdigit(all_search_lines[i][0]) && 
+                                                    all_search_lines[i].find(':') == std::string::npos) {
+                                                // Highlight game titles
+                                                if (has_colors()) {
+                                                    attron(COLOR_PAIR(4)); // Yellow for game titles
+                                                }
+                                                mvprintw(line, 2, "• %s", all_search_lines[i].c_str());
+                                                if (has_colors()) {
+                                                    attroff(COLOR_PAIR(4));
+                                                }
+                                            } 
+                                            // Print other lines normally
+                                            else if (!all_search_lines[i].empty()) {
+                                                mvprintw(line, 2, "%s", all_search_lines[i].c_str());
+                                            }
+                                        }
+                                        
+                                        // Instructions
+                                        mvprintw(height - 6, 2, "UP/DOWN: Navigate pages, ENTER: Continue, ESC: Return to menu");
+                                        
+                                        refresh();
+                                        
+                                        // Handle navigation
+                                        int ch = getch();
+                                        switch (ch) {
+                                            case KEY_UP:
+                                            case 'k':  // Vim-style up
+                                                if (current_page > 0) {
+                                                    current_page--;
+                                                }
+                                                break;
+                                                
+                                            case KEY_DOWN:
+                                            case 'j':  // Vim-style down
+                                                if (current_page < total_pages - 1) {
+                                                    current_page++;
+                                                }
+                                                break;
+                                                
+                                            case 10:   // Enter - proceed to game selection
+                                                search_done = true;
+                                                break;
+                                                
+                                            case 27:   // Escape - return to main menu
+                                            case 'q':  // q to quit
+                                                search_done = true;
+                                                current_level = MAIN_MENU;
+                                                return; // Exit the current function
+                                        }
+                                    }
+                                    
+                                    // Instructions for further actions
+                                    if (!game_list.empty()) {
+                                        // Allow for game selection
+                                        mvprintw(height - 4, 2, "Enter a game name to view details: ");
+                                        
+                                        // Get game name
+                                        echo();
+                                        curs_set(1);
+                                        char game_name[256] = {0};
+                                        getnstr(game_name, 255);
+                                        noecho();
+                                        curs_set(0);
+                                        
+                                        if (strlen(game_name) > 0) {
+                                            // Get and display game details
+                                            std::string details = send_command_and_get_response("SHOW " + std::string(game_name));
+                                            
+                                            // Display game details
+                                            clear();
+                                            box(stdscr, 0, 0);
+                                            
+                                            // Title
+                                            attron(A_BOLD);
+                                            if (has_colors()) {
+                                                attron(COLOR_PAIR(4)); // Yellow for title
+                                            }
+                                            mvprintw(1, (width - 12) / 2, "GAME DETAILS");
+                                            if (has_colors()) {
+                                                attroff(COLOR_PAIR(4));
+                                            }
+                                            attroff(A_BOLD);
+                                            
+                                            // Game name
+                                            attron(A_BOLD);
+                                            mvprintw(3, 2, "Game: %s", game_name);
+                                            attroff(A_BOLD);
+                                            
+                                            // Display details
+                                            int details_line = 5;
+                                            std::istringstream det_iss(details);
+                                            std::string det_line;
+                                            
+                                            while (std::getline(det_iss, det_line) && details_line < height - 6) {
+                                                mvprintw(details_line++, 2, "%s", det_line.c_str());
+                                            }
+                                            
+                                            // Allow checkout option
+                                            mvprintw(height - 4, 2, "Press 'R' to rent this game, any other key to return");
+                                            refresh();
+                                            
+                                            if (getch() == 'r' || getch() == 'R') {
+                                                // Checkout the game
+                                                std::string checkout_response = send_command_and_get_response("CHECKOUT " + std::string(game_name));
+                                                
+                                                // Display checkout result
+                                                clear();
+                                                box(stdscr, 0, 0);
+                                                
+                                                attron(A_BOLD);
+                                                mvprintw(2, (width - 16) / 2, "CHECKOUT RESULT");
+                                                attroff(A_BOLD);
+                                                
+                                                // Display full server response
+                                                mvprintw(4, 2, "Server response:");
+                                                int checkout_result_line = 5;
+                                                std::istringstream resp_iss(checkout_response);
+                                                std::string resp_line;
+                                                
+                                                while (std::getline(resp_iss, resp_line) && checkout_result_line < height - 4) {
+                                                    mvprintw(checkout_result_line++, 4, "%s", resp_line.c_str());
+                                                }
+                                                
+                                                // Wait for key press
+                                                mvprintw(height - 2, 2, "Press any key to return to menu");
+                                                refresh();
+                                                getch();
+                                            }
+                                        }
+                                    } else {
+                                        // No games found
+                                        mvprintw(height - 4, 2, "No games found. Press any key to return to menu");
+                                        refresh();
+                                        getch();
+                                    }
+                                    
+                                    // Return to main menu
+                                    current_level = MAIN_MENU;
                                 }
                             }
                             else if (main_selection == 4) { // View History
-                                response_text = send_command_and_get_response("HISTORY");
-                                current_level = HISTORY_DISPLAY;
+                                // Get rental history
+                                std::string history = send_command_and_get_response("HISTORY");
+                                
+                                // Display the history in a full-screen view
+                                clear();
+                                box(stdscr, 0, 0);
+                                
+                                // Title
+                                attron(A_BOLD);
+                                if (has_colors()) {
+                                    attron(COLOR_PAIR(4)); // Yellow for title
+                                }
+                                mvprintw(1, (width - 14) / 2, "RENTAL HISTORY");
+                                if (has_colors()) {
+                                    attroff(COLOR_PAIR(4));
+                                }
+                                attroff(A_BOLD);
+                                
+                                // Display the history with formatting
+                                int line = 3;
+                                std::istringstream iss(history);
+                                std::string history_line;
+                                
+                                while (std::getline(iss, history_line) && line < height - 4) {
+                                    // Format status codes differently
+                                    if (history_line.length() >= 3 && isdigit(history_line[0]) && 
+                                        isdigit(history_line[1]) && isdigit(history_line[2])) {
+                                        if (has_colors()) {
+                                            attron(COLOR_PAIR(2)); // Green for status
+                                        }
+                                        mvprintw(line++, 2, "Status: %s", history_line.c_str());
+                                        if (has_colors()) {
+                                            attroff(COLOR_PAIR(2));
+                                        }
+                                    } 
+                                    // Format game titles with bullet points
+                                    else if (!history_line.empty() && 
+                                             history_line[0] != '-' && !isdigit(history_line[0]) && 
+                                             history_line.find(':') == std::string::npos) {
+                                        mvprintw(line++, 2, "• %s", history_line.c_str());
+                                    } 
+                                    // Print other lines normally
+                                    else if (!history_line.empty()) {
+                                        mvprintw(line++, 2, "%s", history_line.c_str());
+                                    }
+                                }
+                                
+                                // Instructions
+                                mvprintw(height - 2, 2, "Press any key to return to menu");
+                                refresh();
+                                getch();
+                                
+                                // Return to main menu
+                                current_level = MAIN_MENU;
                             }
                             else if (main_selection == 5) { // Get Recommendations
-                                response_text = send_command_and_get_response("RECOMMEND");
-                                current_level = RECOMMEND_DISPLAY;
+                                // Get recommendations
+                                std::string recommendations = send_command_and_get_response("RECOMMEND");
+                                
+                                // Display the recommendations in a full-screen view
+                                clear();
+                                box(stdscr, 0, 0);
+                                
+                                // Title
+                                attron(A_BOLD);
+                                if (has_colors()) {
+                                    attron(COLOR_PAIR(4)); // Yellow for title
+                                }
+                                mvprintw(1, (width - 17) / 2, "RECOMMENDATIONS");
+                                if (has_colors()) {
+                                    attroff(COLOR_PAIR(4));
+                                }
+                                attroff(A_BOLD);
+                                
+                                // Display the recommendations with formatting
+                                int line = 3;
+                                std::istringstream iss(recommendations);
+                                std::string rec_line;
+                                
+                                while (std::getline(iss, rec_line) && line < height - 4) {
+                                    // Format status codes differently
+                                    if (rec_line.length() >= 3 && isdigit(rec_line[0]) && 
+                                        isdigit(rec_line[1]) && isdigit(rec_line[2])) {
+                                        if (has_colors()) {
+                                            attron(COLOR_PAIR(2)); // Green for status
+                                        }
+                                        mvprintw(line++, 2, "Status: %s", rec_line.c_str());
+                                        if (has_colors()) {
+                                            attroff(COLOR_PAIR(2));
+                                        }
+                                    } 
+                                    // Format game titles with bullet points
+                                    else if (!rec_line.empty() && 
+                                             rec_line[0] != '-' && !isdigit(rec_line[0]) && 
+                                             rec_line.find(':') == std::string::npos) {
+                                        mvprintw(line++, 2, "• %s", rec_line.c_str());
+                                    } 
+                                    // Print other lines normally
+                                    else if (!rec_line.empty()) {
+                                        mvprintw(line++, 2, "%s", rec_line.c_str());
+                                    }
+                                }
+                                
+                                // Instructions
+                                mvprintw(height - 2, 2, "Press any key to return to menu");
+                                refresh();
+                                getch();
+                                
+                                // Return to main menu
+                                current_level = MAIN_MENU;
                             }
                         }
                         break;
@@ -1504,29 +1799,285 @@ void command_interface() {
                             // Process browse submenu selection
                             switch (submenu_selection) {
                                 case 0: // List All Games
-                                    // Get game list and display as selectable list
-                                    std::string results = send_command_and_get_response("LIST");
+                                    {
+                                    // Execute LIST command to show all games
+                                    std::string list_response = send_command_and_get_response("LIST");
                                     
-                                    // Simplified parsing - keep raw results to visualize output
-                                    response_text = results;
+                                    // Show the response in a fullscreen window
+                                    clear();
+                                    box(stdscr, 0, 0);
                                     
-                                    // Also parse into game list for selection
-                                    game_list.clear();
-                                    std::istringstream iss(results);
-                                    std::string result_line;
-                                    while (std::getline(iss, result_line)) {
-                                        // Add any non-empty line that looks like a game title
-                                        if (!result_line.empty() && !result_line.empty() && 
-                                            result_line[0] != '-' && result_line[0] != '2' && 
-                                            result_line.find(':') == std::string::npos) {
-                                            game_list.push_back(result_line);
+                                    // Title
+                                    attron(A_BOLD);
+                                    if (has_colors()) {
+                                        attron(COLOR_PAIR(4)); // Yellow for title
+                                    }
+                                    mvprintw(1, (width - 9) / 2, "ALL GAMES");
+                                    if (has_colors()) {
+                                        attroff(COLOR_PAIR(4));
+                                    }
+                                    attroff(A_BOLD);
+                                    
+                                    // Parse and store all lines first
+                                    std::vector<std::string> all_lines;
+                                    std::istringstream list_iss(list_response);
+                                    std::string list_resp_line;
+                                    
+                                    while (std::getline(list_iss, list_resp_line)) {
+                                        all_lines.push_back(list_resp_line);
+                                    }
+                                    
+                                    // Create a scrollable display with paging
+                                    int current_page = 0;
+                                    int lines_per_page = height - 7; // Leave room for header and footer
+                                    int total_pages = (all_lines.size() + lines_per_page - 1) / lines_per_page;
+                                    
+                                    bool done = false;
+                                    while (!done) {
+                                        clear();
+                                        box(stdscr, 0, 0);
+                                        
+                                        // Title
+                                        attron(A_BOLD);
+                                        if (has_colors()) {
+                                            attron(COLOR_PAIR(4)); // Yellow for title
+                                        }
+                                        mvprintw(1, (width - 9) / 2, "ALL GAMES");
+                                        if (has_colors()) {
+                                            attroff(COLOR_PAIR(4));
+                                        }
+                                        attroff(A_BOLD);
+                                        
+                                        // Show page info
+                                        mvprintw(2, (width - 20) / 2, "Page %d of %d", current_page + 1, total_pages > 0 ? total_pages : 1);
+                                        
+                                        // Display the current page of results
+                                        int start_idx = current_page * lines_per_page;
+                                        int end_idx = std::min(start_idx + lines_per_page, (int)all_lines.size());
+                                        
+                                        for (int i = start_idx, line = 3; i < end_idx; i++, line++) {
+                                            // If this is a status code line (starts with digits)
+                                            if (all_lines[i].length() >= 3 && isdigit(all_lines[i][0]) && 
+                                                isdigit(all_lines[i][1]) && isdigit(all_lines[i][2])) {
+                                                if (has_colors()) {
+                                                    attron(COLOR_PAIR(2)); // Green for status
+                                                }
+                                                mvprintw(line, 2, "Status: %s", all_lines[i].c_str());
+                                                if (has_colors()) {
+                                                    attroff(COLOR_PAIR(2));
+                                                }
+                                            }
+                                            // If this looks like a game title (not starting with digits or special chars)
+                                            else if (!all_lines[i].empty() && 
+                                                    all_lines[i][0] != '-' && !isdigit(all_lines[i][0]) && 
+                                                    all_lines[i].find(':') == std::string::npos) {
+                                                mvprintw(line, 2, "• %s", all_lines[i].c_str());
+                                            }
+                                            // Other lines
+                                            else {
+                                                mvprintw(line, 2, "%s", all_lines[i].c_str());
+                                            }
+                                        }
+                                        
+                                        // Instructions
+                                        mvprintw(height - 2, 2, "UP/DOWN: Navigate pages, ENTER/ESC: Return to menu");
+                                        refresh();
+                                        
+                                        // Handle navigation
+                                        int ch = getch();
+                                        switch (ch) {
+                                            case KEY_UP:
+                                            case 'k':  // Vim-style up
+                                                if (current_page > 0) {
+                                                    current_page--;
+                                                }
+                                                break;
+                                                
+                                            case KEY_DOWN:
+                                            case 'j':  // Vim-style down
+                                                if (current_page < total_pages - 1) {
+                                                    current_page++;
+                                                }
+                                                break;
+                                                
+                                            case 10:   // Enter
+                                            case 27:   // Escape
+                                            case 'q':  // q to quit
+                                                done = true;
+                                                break;
                                         }
                                     }
                                     
-                                    // Show results screen even if parsing didn't identify games
-                                    list_selection = 0;
-                                    current_level = SEARCH_RESULTS;
-                                    search_query = "All Games";
+                                    refresh();
+                                    getch();
+                                    
+                                    // Return to browse menu
+                                    current_level = BROWSE_MENU;
+                                    }
+                                    break;
+                                    
+                                case 1: // List by Genre
+                                    {
+                                    // Show genre selection
+                                    clear();
+                                    box(stdscr, 0, 0);
+                                    
+                                    // Title
+                                    attron(A_BOLD);
+                                    if (has_colors()) {
+                                        attron(COLOR_PAIR(4)); // Yellow for title
+                                    }
+                                    mvprintw(1, (width - 15) / 2, "BROWSE BY GENRE");
+                                    if (has_colors()) {
+                                        attroff(COLOR_PAIR(4));
+                                    }
+                                    attroff(A_BOLD);
+                                    
+                                    // Hardcoded list of common genres
+                                    const char* genres[] = {
+                                        "Action", "Adventure", "RPG", "Strategy", 
+                                        "Simulation", "Sports", "Racing", "Puzzle"
+                                    };
+                                    
+                                    // Display instructions
+                                    mvprintw(3, 2, "Select a genre to browse:");
+                                    
+                                    // Display genres
+                                    for (int i = 0; i < 8; i++) {
+                                        mvprintw(5 + i, 4, "• %s", genres[i]);
+                                    }
+                                    
+                                    // Input prompt
+                                    mvprintw(height - 6, 2, "Enter a genre: ");
+                                    
+                                    // Get genre
+                                    echo();
+                                    curs_set(1);
+                                    char genre_name[256] = {0};
+                                    getnstr(genre_name, 255);
+                                    noecho();
+                                    curs_set(0);
+                                    
+                                    if (strlen(genre_name) > 0) {
+                                        // Execute SEARCH command with genre
+                                        std::string search_cmd = "SEARCH genre:" + std::string(genre_name);
+                                        std::string genre_results = send_command_and_get_response(search_cmd);
+                                        
+                                        // Display results
+                                        clear();
+                                        box(stdscr, 0, 0);
+                                        
+                                        // Title
+                                        attron(A_BOLD);
+                                        if (has_colors()) {
+                                            attron(COLOR_PAIR(4)); // Yellow for title
+                                        }
+                                        mvprintw(1, (width - 40) / 2, "GAMES IN GENRE: %s", genre_name);
+                                        if (has_colors()) {
+                                            attroff(COLOR_PAIR(4));
+                                        }
+                                        attroff(A_BOLD);
+                                        
+                                        // Display the results
+                                        int genre_line = 3;
+                                        std::istringstream genre_iss(genre_results);
+                                        std::string genre_result_line;
+                                        
+                                        while (std::getline(genre_iss, genre_result_line) && genre_line < height - 4) {
+                                            mvprintw(genre_line++, 2, "%s", genre_result_line.c_str());
+                                        }
+                                        
+                                        // Wait for key press
+                                        mvprintw(height - 2, 2, "Press any key to return to menu");
+                                        refresh();
+                                        getch();
+                                    }
+                                    
+                                    // Return to browse menu
+                                    current_level = BROWSE_MENU;
+                                    }
+                                    break;
+                                    
+                                case 2: // List by Platform
+                                    {
+                                    // Show platform selection
+                                    clear();
+                                    box(stdscr, 0, 0);
+                                    
+                                    // Title
+                                    attron(A_BOLD);
+                                    if (has_colors()) {
+                                        attron(COLOR_PAIR(4)); // Yellow for title
+                                    }
+                                    mvprintw(1, (width - 18) / 2, "BROWSE BY PLATFORM");
+                                    if (has_colors()) {
+                                        attroff(COLOR_PAIR(4));
+                                    }
+                                    attroff(A_BOLD);
+                                    
+                                    // Hardcoded list of common platforms
+                                    const char* platforms[] = {
+                                        "PC", "PlayStation", "Xbox", "Switch", 
+                                        "Mobile", "VR", "Arcade", "Retro"
+                                    };
+                                    
+                                    // Display instructions
+                                    mvprintw(3, 2, "Select a platform to browse:");
+                                    
+                                    // Display platforms
+                                    for (int i = 0; i < 8; i++) {
+                                        mvprintw(5 + i, 4, "• %s", platforms[i]);
+                                    }
+                                    
+                                    // Input prompt
+                                    mvprintw(height - 6, 2, "Enter a platform: ");
+                                    
+                                    // Get platform
+                                    echo();
+                                    curs_set(1);
+                                    char platform_name[256] = {0};
+                                    getnstr(platform_name, 255);
+                                    noecho();
+                                    curs_set(0);
+                                    
+                                    if (strlen(platform_name) > 0) {
+                                        // Execute SEARCH command with platform
+                                        std::string platform_cmd = "SEARCH platform:" + std::string(platform_name);
+                                        std::string platform_results = send_command_and_get_response(platform_cmd);
+                                        
+                                        // Display results
+                                        clear();
+                                        box(stdscr, 0, 0);
+                                        
+                                        // Title
+                                        attron(A_BOLD);
+                                        if (has_colors()) {
+                                            attron(COLOR_PAIR(4)); // Yellow for title
+                                        }
+                                        mvprintw(1, (width - 40) / 2, "GAMES ON PLATFORM: %s", platform_name);
+                                        if (has_colors()) {
+                                            attroff(COLOR_PAIR(4));
+                                        }
+                                        attroff(A_BOLD);
+                                        
+                                        // Display the results
+                                        int platform_line = 3;
+                                        std::istringstream platform_iss(platform_results);
+                                        std::string platform_result_line;
+                                        
+                                        while (std::getline(platform_iss, platform_result_line) && platform_line < height - 4) {
+                                            mvprintw(platform_line++, 2, "%s", platform_result_line.c_str());
+                                        }
+                                        
+                                        // Wait for key press
+                                        mvprintw(height - 2, 2, "Press any key to return to menu");
+                                        refresh();
+                                        getch();
+                                    }
+                                    
+                                    // Return to browse menu
+                                    current_level = BROWSE_MENU;
+                                    }
                                     break;
                             }
                         }
@@ -1558,29 +2109,283 @@ void command_interface() {
                             // Process rent submenu selection
                             switch (submenu_selection) {
                                 case 0: // Checkout Game
-                                    // Get list of available games first
-                                    std::string results = send_command_and_get_response("LIST");
+                                    {
+                                    // Show game checkout interface
+                                    clear();
+                                    box(stdscr, 0, 0);
                                     
-                                    // Store raw response for display
-                                    response_text = results;
+                                    // Title
+                                    attron(A_BOLD);
+                                    if (has_colors()) {
+                                        attron(COLOR_PAIR(4)); // Yellow for title
+                                    }
+                                    mvprintw(1, (width - 15) / 2, "CHECKOUT A GAME");
+                                    if (has_colors()) {
+                                        attroff(COLOR_PAIR(4));
+                                    }
+                                    attroff(A_BOLD);
                                     
-                                    // Parse results into game list
-                                    game_list.clear();
-                                    std::istringstream iss(results);
-                                    std::string result_line;
-                                    while (std::getline(iss, result_line)) {
-                                        // Add any non-empty line that looks like a game title
-                                        if (!result_line.empty() && 
-                                            result_line[0] != '-' && result_line[0] != '2' && 
-                                            result_line.find(':') == std::string::npos) {
-                                            game_list.push_back(result_line);
+                                    // Get list of available games
+                                    std::string checkout_games_list = send_command_and_get_response("LIST");
+                                    
+                                    // Parse and store all lines first
+                                    std::vector<std::string> checkout_lines;
+                                    std::istringstream checkout_iss(checkout_games_list);
+                                    std::string checkout_line;
+                                    
+                                    while (std::getline(checkout_iss, checkout_line)) {
+                                        checkout_lines.push_back(checkout_line);
+                                    }
+                                    
+                                    // Create a scrollable display with paging
+                                    int checkout_page = 0;
+                                    int checkout_lines_per_page = height - 14; // Leave room for header and footer plus input
+                                    int checkout_total_pages = (checkout_lines.size() + checkout_lines_per_page - 1) / checkout_lines_per_page;
+                                    
+                                    bool checkout_browsing = true;
+                                    while (checkout_browsing) {
+                                        clear();
+                                        box(stdscr, 0, 0);
+                                        
+                                        // Title
+                                        attron(A_BOLD);
+                                        if (has_colors()) {
+                                            attron(COLOR_PAIR(4)); // Yellow for title
+                                        }
+                                        mvprintw(1, (width - 15) / 2, "CHECKOUT A GAME");
+                                        if (has_colors()) {
+                                            attroff(COLOR_PAIR(4));
+                                        }
+                                        attroff(A_BOLD);
+                                        
+                                        // Display instructions
+                                        mvprintw(3, 2, "Available games:");
+                                        
+                                        // Show page info
+                                        mvprintw(4, (width - 20) / 2, "Page %d of %d", checkout_page + 1, checkout_total_pages > 0 ? checkout_total_pages : 1);
+                                        
+                                        // Display the current page of results
+                                        int start_idx = checkout_page * checkout_lines_per_page;
+                                        int end_idx = std::min(start_idx + checkout_lines_per_page, (int)checkout_lines.size());
+                                        
+                                        for (int i = start_idx, line = 5; i < end_idx; i++, line++) {
+                                            // If this is a status code line (starts with digits)
+                                            if (checkout_lines[i].length() >= 3 && isdigit(checkout_lines[i][0]) && 
+                                                isdigit(checkout_lines[i][1]) && isdigit(checkout_lines[i][2])) {
+                                                if (has_colors()) {
+                                                    attron(COLOR_PAIR(2)); // Green for status
+                                                }
+                                                mvprintw(line, 2, "Status: %s", checkout_lines[i].c_str());
+                                                if (has_colors()) {
+                                                    attroff(COLOR_PAIR(2));
+                                                }
+                                            }
+                                            // If this looks like a game title
+                                            else if (!checkout_lines[i].empty() && 
+                                                    checkout_lines[i][0] != '-' && !isdigit(checkout_lines[i][0]) && 
+                                                    checkout_lines[i].find(':') == std::string::npos) {
+                                                mvprintw(line, 4, "• %s", checkout_lines[i].c_str());
+                                            }
+                                            // Other lines
+                                            else {
+                                                mvprintw(line, 4, "%s", checkout_lines[i].c_str());
+                                            }
+                                        }
+                                        
+                                        // Navigation instructions
+                                        mvprintw(height - 10, 2, "UP/DOWN: Navigate pages, ENTER: Proceed to checkout, ESC: Cancel");
+                                        refresh();
+                                        
+                                        // Handle navigation
+                                        int ch = getch();
+                                        switch (ch) {
+                                            case KEY_UP:
+                                            case 'k':  // Vim-style up
+                                                if (checkout_page > 0) {
+                                                    checkout_page--;
+                                                }
+                                                break;
+                                                
+                                            case KEY_DOWN:
+                                            case 'j':  // Vim-style down
+                                                if (checkout_page < checkout_total_pages - 1) {
+                                                    checkout_page++;
+                                                }
+                                                break;
+                                                
+                                            case 10:   // Enter - proceed to checkout
+                                                checkout_browsing = false;
+                                                break;
+                                                
+                                            case 27:   // Escape - return to rent menu
+                                            case 'q':  // q to quit
+                                                current_level = RENT_MENU;
+                                                return; // Exit the current function
                                         }
                                     }
                                     
-                                    // Show results even if no games were parsed
-                                    list_selection = 0;
-                                    current_level = SEARCH_RESULTS;
-                                    search_query = "Available Games";
+                                    // Input prompt
+                                    mvprintw(height - 8, 2, "Enter game name to checkout: ");
+                                    
+                                    // Get game name
+                                    echo();
+                                    curs_set(1);
+                                    char game_name1[256] = {0};
+                                    getnstr(game_name1, 255);
+                                    noecho();
+                                    curs_set(0);
+                                    
+                                    if (strlen(game_name1) > 0) {
+                                        // Send checkout command
+                                        std::string checkout_response = send_command_and_get_response("CHECKOUT " + std::string(game_name1));
+                                        
+                                        // Display result
+                                        clear();
+                                        box(stdscr, 0, 0);
+                                        
+                                        attron(A_BOLD);
+                                        mvprintw(2, (width - 16) / 2, "CHECKOUT RESULT");
+                                        attroff(A_BOLD);
+                                        
+                                        // Parse response to show success/failure status
+                                        if (checkout_response.find("success") != std::string::npos || 
+                                            checkout_response.find("200") != std::string::npos) {
+                                            // Success message
+                                            if (has_colors()) {
+                                                attron(COLOR_PAIR(2)); // Green for success
+                                            }
+                                            mvprintw(4, 2, "SUCCESS: Game checked out successfully!");
+                                            if (has_colors()) {
+                                                attroff(COLOR_PAIR(2));
+                                            }
+                                        } else {
+                                            // Error message
+                                            if (has_colors()) {
+                                                attron(COLOR_PAIR(3)); // Red for error
+                                            }
+                                            mvprintw(4, 2, "ERROR: Failed to checkout game.");
+                                            if (has_colors()) {
+                                                attroff(COLOR_PAIR(3));
+                                            }
+                                        }
+                                        
+                                        // Display full server response
+                                        mvprintw(6, 2, "Server response:");
+                                        int line_num1 = 7;
+                                        std::istringstream resp_iss1(checkout_response);
+                                        std::string resp_line1;
+                                        
+                                        while (std::getline(resp_iss1, resp_line1) && line_num1 < height - 4) {
+                                            mvprintw(line_num1++, 4, "%s", resp_line1.c_str());
+                                        }
+                                    }
+                                    
+                                    // Wait for key press
+                                    mvprintw(height - 2, 2, "Press any key to return to menu");
+                                    refresh();
+                                    getch();
+                                    
+                                    // Return to rent menu
+                                    current_level = RENT_MENU;
+                                    break;
+                                    }
+                                    
+                                case 1: // Return Game
+                                    {
+                                    // Show game return interface
+                                    clear();
+                                    box(stdscr, 0, 0);
+                                    
+                                    // Title
+                                    attron(A_BOLD);
+                                    if (has_colors()) {
+                                        attron(COLOR_PAIR(4)); // Yellow for title
+                                    }
+                                    mvprintw(1, (width - 14) / 2, "RETURN A GAME");
+                                    if (has_colors()) {
+                                        attroff(COLOR_PAIR(4));
+                                    }
+                                    attroff(A_BOLD);
+                                    
+                                    // First get a list of currently rented games
+                                    std::string rented_games2 = send_command_and_get_response("MYGAMES");
+                                    
+                                    // Display instructions
+                                    mvprintw(3, 2, "Your currently rented games:");
+                                    
+                                    // Display the list
+                                    int line2 = 5;
+                                    std::istringstream iss2(rented_games2);
+                                    std::string list_line2;
+                                    
+                                    while (std::getline(iss2, list_line2) && line2 < height - 10) {
+                                        mvprintw(line2++, 4, "%s", list_line2.c_str());
+                                    }
+                                    
+                                    // Input prompt
+                                    mvprintw(height - 6, 2, "Enter game name to return: ");
+                                    
+                                    // Get game name
+                                    echo();
+                                    curs_set(1);
+                                    char game_name2[256] = {0};
+                                    getnstr(game_name2, 255);
+                                    noecho();
+                                    curs_set(0);
+                                    
+                                    if (strlen(game_name2) > 0) {
+                                        // Send return command
+                                        std::string return_response = send_command_and_get_response("RETURN " + std::string(game_name2));
+                                        
+                                        // Display result
+                                        clear();
+                                        box(stdscr, 0, 0);
+                                        
+                                        attron(A_BOLD);
+                                        mvprintw(2, (width - 14) / 2, "RETURN RESULT");
+                                        attroff(A_BOLD);
+                                        
+                                        // Parse response to show success/failure status
+                                        if (return_response.find("success") != std::string::npos || 
+                                            return_response.find("200") != std::string::npos) {
+                                            // Success message
+                                            if (has_colors()) {
+                                                attron(COLOR_PAIR(2)); // Green for success
+                                            }
+                                            mvprintw(4, 2, "SUCCESS: Game returned successfully!");
+                                            if (has_colors()) {
+                                                attroff(COLOR_PAIR(2));
+                                            }
+                                        } else {
+                                            // Error message
+                                            if (has_colors()) {
+                                                attron(COLOR_PAIR(3)); // Red for error
+                                            }
+                                            mvprintw(4, 2, "ERROR: Failed to return game.");
+                                            if (has_colors()) {
+                                                attroff(COLOR_PAIR(3));
+                                            }
+                                        }
+                                        
+                                        // Display full server response
+                                        mvprintw(6, 2, "Server response:");
+                                        int line_num2 = 7;
+                                        std::istringstream resp_iss2(return_response);
+                                        std::string resp_line2;
+                                        
+                                        while (std::getline(resp_iss2, resp_line2) && line_num2 < height - 4) {
+                                            mvprintw(line_num2++, 4, "%s", resp_line2.c_str());
+                                        }
+                                    }
+                                    
+                                    // Wait for key press
+                                    mvprintw(height - 2, 2, "Press any key to return to menu");
+                                    refresh();
+                                    getch();
+                                    
+                                    // Return to rent menu
+                                    current_level = RENT_MENU;
+                                    }
                                     break;
                             }
                         }
@@ -1612,20 +2417,198 @@ void command_interface() {
                             // Process my games submenu selection
                             switch (submenu_selection) {
                                 case 0: // Currently Rented Games
+                                    {
+                                    // Show rented games interface
+                                    clear();
+                                    box(stdscr, 0, 0);
+                                    
+                                    // Title
+                                    attron(A_BOLD);
+                                    if (has_colors()) {
+                                        attron(COLOR_PAIR(4)); // Yellow for title
+                                    }
+                                    mvprintw(1, (width - 16) / 2, "MY RENTED GAMES");
+                                    if (has_colors()) {
+                                        attroff(COLOR_PAIR(4));
+                                    }
+                                    attroff(A_BOLD);
+                                    
                                     // Get list of rented games
-                                    response_text = send_command_and_get_response("MYGAMES");
-                                    current_level = HISTORY_DISPLAY; // Reuse history display for this
+                                    std::string my_rented_games = send_command_and_get_response("MYGAMES");
+                                    
+                                    // Display the list with proper formatting
+                                    int my_line = 3;
+                                    std::istringstream my_iss(my_rented_games);
+                                    std::string my_list_line;
+                                    
+                                    while (std::getline(my_iss, my_list_line) && my_line < height - 4) {
+                                        // If this looks like a status line, format it differently
+                                        if (my_list_line.length() >= 3 && isdigit(my_list_line[0]) && 
+                                            isdigit(my_list_line[1]) && isdigit(my_list_line[2])) {
+                                            if (has_colors()) {
+                                                attron(COLOR_PAIR(2)); // Green for status
+                                            }
+                                            mvprintw(my_line++, 2, "Status: %s", my_list_line.c_str());
+                                            if (has_colors()) {
+                                                attroff(COLOR_PAIR(2));
+                                            }
+                                        } else if (!my_list_line.empty()) {
+                                            // Add a bullet point to game names
+                                            mvprintw(my_line++, 2, "• %s", my_list_line.c_str());
+                                        }
+                                    }
+                                    
+                                    // Wait for key press
+                                    mvprintw(height - 2, 2, "Press any key to return to menu");
+                                    refresh();
+                                    getch();
+                                    
+                                    // Return to my games menu
+                                    current_level = MYGAMES_MENU;
+                                    }
                                     break;
                                     
                                 case 1: // Rate a Game
-                                    // Get list of games to rate (previously rented)
-                                    response_text = send_command_and_get_response("HISTORY");
-                                    current_level = HISTORY_DISPLAY;
+                                    {
+                                    // Show game rating interface
+                                    clear();
+                                    box(stdscr, 0, 0);
+                                    
+                                    // Title
+                                    attron(A_BOLD);
+                                    if (has_colors()) {
+                                        attron(COLOR_PAIR(4)); // Yellow for title
+                                    }
+                                    mvprintw(1, (width - 10) / 2, "RATE GAMES");
+                                    if (has_colors()) {
+                                        attroff(COLOR_PAIR(4));
+                                    }
+                                    attroff(A_BOLD);
+                                    
+                                    // First get rental history
+                                    std::string rating_history = send_command_and_get_response("HISTORY");
+                                    
+                                    // Display instructions
+                                    mvprintw(3, 2, "Your rental history (games you can rate):");
+                                    
+                                    // Display the history
+                                    int rating_line = 5;
+                                    std::istringstream rating_iss(rating_history);
+                                    std::string rating_history_line;
+                                    
+                                    while (std::getline(rating_iss, rating_history_line) && rating_line < height - 10) {
+                                        mvprintw(rating_line++, 4, "%s", rating_history_line.c_str());
+                                    }
+                                    
+                                    // Input prompt for game name
+                                    mvprintw(height - 8, 2, "Enter game name to rate: ");
+                                    
+                                    // Get game name
+                                    echo();
+                                    curs_set(1);
+                                    char rating_game_name[256] = {0};
+                                    getnstr(rating_game_name, 255);
+                                    
+                                    if (strlen(rating_game_name) > 0) {
+                                        // Input prompt for rating
+                                        mvprintw(height - 6, 2, "Enter rating (1-5): ");
+                                        
+                                        // Get rating
+                                        char rating_str[2] = {0};
+                                        getnstr(rating_str, 1);
+                                        
+                                        if (strlen(rating_str) > 0 && rating_str[0] >= '1' && rating_str[0] <= '5') {
+                                            // Send rate command
+                                            std::string rate_response = send_command_and_get_response(
+                                                "RATE " + std::string(rating_game_name) + " " + rating_str);
+                                            
+                                            // Display result
+                                            clear();
+                                            box(stdscr, 0, 0);
+                                            
+                                            attron(A_BOLD);
+                                            mvprintw(2, (width - 12) / 2, "RATING RESULT");
+                                            attroff(A_BOLD);
+                                            
+                                            // Display full server response
+                                            mvprintw(4, 2, "Server response:");
+                                            int rate_line_num = 5;
+                                            std::istringstream rate_resp_iss(rate_response);
+                                            std::string rate_resp_line;
+                                            
+                                            while (std::getline(rate_resp_iss, rate_resp_line) && rate_line_num < height - 4) {
+                                                mvprintw(rate_line_num++, 4, "%s", rate_resp_line.c_str());
+                                            }
+                                            
+                                            // Wait for key press
+                                            mvprintw(height - 2, 2, "Press any key to return to menu");
+                                            refresh();
+                                            getch();
+                                        }
+                                    }
+                                    
+                                    noecho();
+                                    curs_set(0);
+                                    
+                                    // Return to my games menu
+                                    current_level = MYGAMES_MENU;
+                                    }
                                     break;
                                     
                                 case 2: // View Recommendations
-                                    response_text = send_command_and_get_response("RECOMMEND");
-                                    current_level = RECOMMEND_DISPLAY;
+                                    {
+                                    // Show recommendations interface
+                                    clear();
+                                    box(stdscr, 0, 0);
+                                    
+                                    // Title
+                                    attron(A_BOLD);
+                                    if (has_colors()) {
+                                        attron(COLOR_PAIR(4)); // Yellow for title
+                                    }
+                                    mvprintw(1, (width - 17) / 2, "RECOMMENDATIONS");
+                                    if (has_colors()) {
+                                        attroff(COLOR_PAIR(4));
+                                    }
+                                    attroff(A_BOLD);
+                                    
+                                    // Get recommendations
+                                    std::string my_recommendations = send_command_and_get_response("RECOMMEND");
+                                    
+                                    // Display the recommendations with proper formatting
+                                    int rec_line = 3;
+                                    std::istringstream my_rec_iss(my_recommendations);
+                                    std::string my_rec_line;
+                                    
+                                    while (std::getline(my_rec_iss, my_rec_line) && rec_line < height - 4) {
+                                        // Format response code differently
+                                        if (my_rec_line.length() >= 3 && isdigit(my_rec_line[0]) && 
+                                            isdigit(my_rec_line[1]) && isdigit(my_rec_line[2])) {
+                                            if (has_colors()) {
+                                                attron(COLOR_PAIR(2)); // Green for status
+                                            }
+                                            mvprintw(rec_line++, 2, "Status: %s", my_rec_line.c_str());
+                                            if (has_colors()) {
+                                                attroff(COLOR_PAIR(2));
+                                            }
+                                        } else if (!my_rec_line.empty()) {
+                                            // Format game recommendations with bullet points
+                                            if (my_rec_line[0] != '-' && !isdigit(my_rec_line[0])) {
+                                                mvprintw(rec_line++, 2, "• %s", my_rec_line.c_str());
+                                            } else {
+                                                mvprintw(rec_line++, 2, "%s", my_rec_line.c_str());
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Wait for key press
+                                    mvprintw(height - 2, 2, "Press any key to return to menu");
+                                    refresh();
+                                    getch();
+                                    
+                                    // Return to my games menu
+                                    current_level = MYGAMES_MENU;
+                                    }
                                     break;
                             }
                         }
