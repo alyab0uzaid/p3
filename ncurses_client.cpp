@@ -566,22 +566,22 @@ bool password_form(const std::string& username, bool is_new_user) {
                 mvprintw(10, 10, "Creating your new account...");
                 refresh();
                 
-                // Send USER command first to start session
+                // For account creation, we just use USER and PASS
+                // The server detects new users automatically and handles it
+                
+                // Send USER command to initiate authentication
                 std::string user_cmd_response = send_command_and_get_response("USER " + username);
                 
-                // Send NEWUSER command to create the account
-                std::string newuser_response = send_command_and_get_response("NEWUSER " + username);
-                
-                // Check if account creation was successful
-                if (newuser_response.find("230") == std::string::npos) {
-                    mvprintw(12, 10, "Failed to create account: %s", newuser_response.c_str());
+                // Check if the USER command was successful
+                if (user_cmd_response.find("331") == std::string::npos) {
+                    mvprintw(12, 10, "Failed to initiate account creation: %s", user_cmd_response.c_str());
                     mvprintw(14, 10, "Press any key to continue...");
                     refresh();
                     getch();
                     return false;
                 }
                 
-                // Send PASS command to set the password for the new account
+                // Send PASS command to set the password
                 std::string pass_response = send_command_and_get_response("PASS " + std::string(password));
                 
                 // Check if password was set successfully
@@ -600,7 +600,7 @@ bool password_form(const std::string& username, bool is_new_user) {
                 } else {
                     clear();
                     box(stdscr, 0, 0);
-                    mvprintw(10, 10, "Account created but password setting failed: %s", pass_response.c_str());
+                    mvprintw(10, 10, "Account creation failed: %s", pass_response.c_str());
                     mvprintw(12, 10, "Press any key to continue...");
                     refresh();
                     getch();
