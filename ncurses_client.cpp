@@ -607,12 +607,6 @@ bool password_form(const std::string& username, bool is_new_user) {
                     return false;
                 }
             } else {
-                // Show login message for existing user
-                clear();
-                box(stdscr, 0, 0);
-                mvprintw(10, 10, "Verifying your login credentials...");
-                refresh();
-                
                 // Send PASS command with password
                 std::string pass_response = send_command_and_get_response("PASS " + std::string(password));
                 
@@ -630,13 +624,30 @@ bool password_form(const std::string& username, bool is_new_user) {
                     current_user = username;
                     return true;
                 } else {
-                    clear();
-                    box(stdscr, 0, 0);
-                    mvprintw(10, 10, "Login failed: %s", pass_response.c_str());
-                    mvprintw(12, 10, "Press any key to continue...");
+                    // Password is incorrect - clear field and show red error message
+                    
+                    // Clear password field
+                    for (int i = 0; i < 30; i++) {
+                        mvaddch(9, 15 + i, '_');
+                    }
+                    pos = 0; // Reset cursor position
+                    
+                    // Show error in red
+                    if (has_colors()) {
+                        attron(COLOR_PAIR(3)); // Red text for error
+                    }
+                    mvprintw(13, 5, "Incorrect password. Please try again.");
+                    if (has_colors()) {
+                        attroff(COLOR_PAIR(3));
+                    }
                     refresh();
-                    getch();
-                    return false;
+                    
+                    // Move cursor back to password field
+                    move(9, 15);
+                    refresh();
+                    
+                    // Continue the input loop (return to password entry)
+                    continue;
                 }
             }
         }
