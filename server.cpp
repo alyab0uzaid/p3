@@ -477,6 +477,7 @@ std::string handleHelp(bool browseMode, bool rentMode, bool myGamesMode) {
         out << "  HISTORY\n";
         out << "  RECOMMEND [platform|genre]\n";
         out << "  RATE <game_id> <rating>\n";
+        out << "  RATING <game_id>\n";
     }
     else if (browseMode) {
         out << "[BROWSE MODE COMMANDS]\n";
@@ -502,6 +503,7 @@ std::string handleHelp(bool browseMode, bool rentMode, bool myGamesMode) {
         out << "HISTORY\n";
         out << "RECOMMEND [platform|genre]\n";
         out << "RATE <game_id> <rating>\n";
+        out << "RATING <game_id>\n";
         out << "BROWSE\n";
         out << "RENT\n";
         out << "HELP\n";
@@ -898,6 +900,20 @@ std::string handleRate(const std::string &clientAddr, int gameId, int ratingVal,
     return out.str();
 }
 
+// New function to display ESRB ratings
+std::string handleRating(const std::vector<Game> &games, int gameId) {
+    // Find the game by ID
+    for (const auto &game : games) {
+        if (game.id == gameId) {
+            std::ostringstream out;
+            out << "250 ESRB Rating for \"" << game.title << "\" is " << game.esrb;
+            return out.str();
+        }
+    }
+    
+    return "404 Game not found";
+}
+
 // Forward declarations for authentication functions
 std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser);
 std::string handlePass(const std::string &password, bool &authenticated, std::string &currentUser,
@@ -1032,6 +1048,14 @@ std::string handleCommand(const std::string &command,
             int gID, val;
             ss >> c >> gID >> val;
             return handleRate(currentUser, gID, val, games);  // Use currentUser instead of clientAddr
+        }
+        else if (command.rfind("RATING ", 0) == 0) {
+            //RATING (display ESRB rating)
+            std::istringstream ss(command);
+            std::string c;
+            int gID;
+            ss >> c >> gID;
+            return handleRating(games, gID);
         }
     }
     //BYE
