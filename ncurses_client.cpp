@@ -893,205 +893,218 @@ bool password_form(const std::string& username, bool is_new_user) {
     return false;
 }
 
-// Command interface - enhanced version
+// Menu-based interface
 void command_interface() {
-    clear();
-    
     // Get screen dimensions
     int height, width;
     getmaxyx(stdscr, height, width);
     
-    // Create a styled window layout with box drawing characters
-    box(stdscr, 0, 0);
+    // Define menu options
+    const int NUM_MENU_ITEMS = 7;
+    const char* menu_items[NUM_MENU_ITEMS] = {
+        "Browse Games",
+        "Rent a Game",
+        "My Games",
+        "Search Games",
+        "View History",
+        "Get Recommendations",
+        "Log Out"
+    };
     
-    // Create a header with color background if colors available
-    if (has_colors()) {
-        attron(COLOR_PAIR(1)); // White on blue for header
-    }
-    for (int i = 0; i < width; i++) {
-        mvaddch(0, i, ' ');
-    }
+    // Associated commands for each menu item
+    const char* menu_commands[NUM_MENU_ITEMS] = {
+        "BROWSE",
+        "RENT",
+        "MYGAMES",
+        "SEARCH",
+        "HISTORY",
+        "RECOMMEND",
+        "EXIT"
+    };
     
-    // Draw title in the header
-    attron(A_BOLD);
-    mvprintw(0, (width - 31) / 2, "GAME RENTAL SYSTEM");
-    attroff(A_BOLD);
+    // Initialize menu state
+    int current_selection = 0;
+    bool in_submenu = false;
+    std::string current_mode = "";
+    std::string response_text = "";
     
-    if (has_colors()) {
-        attroff(COLOR_PAIR(1));
-    }
-    
-    // Draw user info with a box
-    WINDOW* user_info = newwin(3, width - 4, 2, 2);
-    box(user_info, 0, 0);
-    mvwprintw(user_info, 0, 2, " User Info ");
-    mvwprintw(user_info, 1, 2, "Logged in as: %s", current_user.c_str());
-    wrefresh(user_info);
-    
-    // Instructions panel
-    WINDOW* instructions = newwin(3, width - 4, 6, 2);
-    box(instructions, 0, 0);
-    mvwprintw(instructions, 0, 2, " Help ");
-    mvwprintw(instructions, 1, 2, "Type commands and press Enter. Type 'HELP' for list of commands. Type 'EXIT' to log out.");
-    wrefresh(instructions);
-    
-    // Create command output area
-    WINDOW* output_win = newwin(height - 14, width - 4, 10, 2);
-    box(output_win, 0, 0);
-    mvwprintw(output_win, 0, 2, " Command Output ");
-    wrefresh(output_win);
-    
-    // Create scrolling pad for command output
-    // Pad needs to be larger than visible area to allow scrolling
-    WINDOW* output_pad = newpad(500, width - 6); // 500 lines should be enough for most outputs
-    
-    // Current position in the output pad
-    int pad_pos = 0;
-    
-    // Display help at start
-    std::string help_response = send_command_and_get_response("HELP");
-    wattron(output_pad, A_BOLD);
-    mvwprintw(output_pad, pad_pos++, 0, "Available commands:");
-    wattroff(output_pad, A_BOLD);
-    
-    std::istringstream help_stream(help_response);
-    std::string line;
-    while (std::getline(help_stream, line)) {
-        mvwprintw(output_pad, pad_pos++, 2, "%s", line.c_str());
-    }
-    
-    // Show the pad content in the visible area
-    prefresh(output_pad, 0, 0, 11, 3, height - 5, width - 5);
-    
-    pad_pos += 1; // Add an extra blank line
-    
-    // Create a command input bar at the bottom
-    WINDOW* cmd_win = newwin(3, width - 4, height - 4, 2);
-    box(cmd_win, 0, 0);
-    mvwprintw(cmd_win, 0, 2, " Enter Command ");
-    wrefresh(cmd_win);
-    
-    // Command input loop
+    // Main menu loop
     while (true) {
-        // Draw Command prompt
-        wmove(cmd_win, 1, 2);
-        wclrtoeol(cmd_win); // Clear previous command
+        // Clear screen and create basic layout
+        clear();
         
-        // Use green for the # prompt
-        wattron(cmd_win, A_BOLD);
+        // Create a header with color background
         if (has_colors()) {
-            wattron(cmd_win, COLOR_PAIR(2)); // Green for hash
+            attron(COLOR_PAIR(1)); // White on blue for header
         }
-        mvwprintw(cmd_win, 1, 2, "#");
-        if (has_colors()) {
-            wattroff(cmd_win, COLOR_PAIR(2));
+        for (int i = 0; i < width; i++) {
+            mvaddch(0, i, ' ');
         }
         
-        // Space after the hash
-        mvwprintw(cmd_win, 1, 3, " ");
-        wattroff(cmd_win, A_BOLD);
-        wrefresh(cmd_win);
+        // Draw title in the header
+        attron(A_BOLD);
+        mvprintw(0, (width - 31) / 2, "GAME RENTAL SYSTEM");
+        attroff(A_BOLD);
         
-        // Make cursor visible and position it for input
-        curs_set(1);
+        if (has_colors()) {
+            attroff(COLOR_PAIR(1));
+        }
         
-        // Get user input
-        char cmd_buf[256] = {0};
-        echo(); // Show typing
-        mvwgetnstr(cmd_win, 1, 4, cmd_buf, 255);
-        noecho(); // Hide typing for next iteration
+        // Create content area
+        box(stdscr, 0, 0);
         
-        std::string command(cmd_buf);
+        // User info
+        attron(A_BOLD);
+        mvprintw(2, 2, "User: %s", current_user.c_str());
+        attroff(A_BOLD);
         
-        // Handle exit
-        if (command == "EXIT" || command == "exit") {
-            // Create a nice goodbye animation
-            clear();
-            box(stdscr, 0, 0);
-            
+        // Display current mode if in a submenu
+        if (in_submenu && !current_mode.empty()) {
             attron(A_BOLD);
-            mvprintw(height/2 - 2, (width - 20) / 2, "Logging out...");
+            if (has_colors()) {
+                attron(COLOR_PAIR(4)); // Yellow for mode
+            }
+            mvprintw(2, width - 20, "Mode: %s", current_mode.c_str());
+            if (has_colors()) {
+                attroff(COLOR_PAIR(4));
+            }
+            attroff(A_BOLD);
+        }
+        
+        // Horizontal separator
+        for (int i = 1; i < width - 1; i++) {
+            mvaddch(3, i, ACS_HLINE);
+        }
+        
+        // Display menu or submenu content
+        if (!in_submenu) {
+            // Main menu title
+            attron(A_BOLD);
+            mvprintw(5, (width - 9) / 2, "MAIN MENU");
             attroff(A_BOLD);
             
-            // Countdown animation
-            for (int i = 3; i > 0; i--) {
-                mvprintw(height/2, (width - 10) / 2, "Goodbye in %d", i);
-                refresh();
-                napms(400);
-            }
-            
-            mvprintw(height/2, (width - 20) / 2, "Goodbye! Thank you!");
-            refresh();
-            napms(700);
-            break;
-        }
-        
-        // Skip empty commands
-        if (command.empty()) {
-            continue;
-        }
-        
-        // Show command in output with some styling
-        wattron(output_pad, A_BOLD);
-        
-        // Use green specifically for the # character
-        if (has_colors()) {
-            wattron(output_pad, COLOR_PAIR(2)); // Green for prompt character
-        }
-        mvwprintw(output_pad, pad_pos, 0, "#");
-        if (has_colors()) {
-            wattroff(output_pad, COLOR_PAIR(2));
-            
-            // Use yellow for the command text
-            wattron(output_pad, COLOR_PAIR(4)); 
-        }
-        
-        // Print the actual command after the prompt
-        mvwprintw(output_pad, pad_pos++, 2, "%s", command.c_str());
-        
-        if (has_colors()) {
-            wattroff(output_pad, COLOR_PAIR(4));
-        }
-        wattroff(output_pad, A_BOLD);
-        
-        // Process command
-        std::string response = send_command_and_get_response(command);
-        
-        // Display response with wrapping if needed
-        std::istringstream iss(response);
-        std::string resp_line;
-        while (std::getline(iss, resp_line)) {
-            // Handle long lines with wrap
-            int max_width = width - 10; // Leave some room from edges
-            if ((int)resp_line.length() > max_width) {
-                for (size_t i = 0; i < resp_line.length(); i += max_width) {
-                    mvwprintw(output_pad, pad_pos++, 2, "%s", 
-                             resp_line.substr(i, std::min((size_t)max_width, resp_line.length() - i)).c_str());
+            // Display menu items
+            for (int i = 0; i < NUM_MENU_ITEMS; i++) {
+                // Highlight current selection
+                if (i == current_selection) {
+                    attron(A_REVERSE);
+                    if (has_colors()) {
+                        attron(COLOR_PAIR(2)); // Green highlight
+                    }
                 }
-            } else {
-                mvwprintw(output_pad, pad_pos++, 2, "%s", resp_line.c_str());
+                
+                // Center the menu item
+                mvprintw(7 + i, (width - strlen(menu_items[i])) / 2, "%s", menu_items[i]);
+                
+                if (i == current_selection) {
+                    attroff(A_REVERSE);
+                    if (has_colors()) {
+                        attroff(COLOR_PAIR(2));
+                    }
+                }
             }
+            
+            // Instructions
+            mvprintw(height - 3, 2, "Use UP/DOWN to navigate, ENTER to select, Q to quit");
+        } else {
+            // Submenu/command output display
+            // Create a content area for command output
+            WINDOW* output_win = newwin(height - 7, width - 4, 5, 2);
+            box(output_win, 0, 0);
+            
+            // Add title to the output window
+            wattron(output_win, A_BOLD);
+            mvwprintw(output_win, 0, 2, " %s Results ", current_mode.c_str());
+            wattroff(output_win, A_BOLD);
+            
+            // Display command response
+            int line = 1;
+            std::istringstream iss(response_text);
+            std::string resp_line;
+            while (std::getline(iss, resp_line) && line < height - 9) {
+                mvwprintw(output_win, line++, 2, "%s", resp_line.c_str());
+            }
+            
+            wrefresh(output_win);
+            
+            // Instructions for submenu
+            mvprintw(height - 3, 2, "Press ESC to return to main menu");
+            
+            // Clean up
+            delwin(output_win);
         }
         
-        // Add a blank line after response
-        pad_pos++;
+        // Refresh screen
+        refresh();
         
-        // Calculate visible area and scroll if needed
-        int visible_height = height - 16; // Height of visible output area
-        int scroll_start = (pad_pos > visible_height) ? pad_pos - visible_height : 0;
+        // Handle input
+        keypad(stdscr, TRUE); // Enable arrow keys
+        noecho(); // Don't show input
+        curs_set(0); // Hide cursor
         
-        // Show the updated pad content
-        prefresh(output_pad, scroll_start, 0, 11, 3, height - 5, width - 5);
+        int ch = getch();
+        
+        if (in_submenu) {
+            // Submenu input handling
+            if (ch == 27 || ch == 'q' || ch == 'Q') { // ESC or q to exit submenu
+                in_submenu = false;
+                current_mode = "";
+                response_text = "";
+            }
+        } else {
+            // Main menu input handling
+            switch (ch) {
+                case KEY_UP:
+                    current_selection = (current_selection - 1 + NUM_MENU_ITEMS) % NUM_MENU_ITEMS;
+                    break;
+                    
+                case KEY_DOWN:
+                    current_selection = (current_selection + 1) % NUM_MENU_ITEMS;
+                    break;
+                    
+                case 10: // Enter key
+                    if (current_selection == NUM_MENU_ITEMS - 1) { // Log Out option
+                        // Create a nice goodbye animation
+                        clear();
+                        box(stdscr, 0, 0);
+                        
+                        attron(A_BOLD);
+                        mvprintw(height/2 - 2, (width - 20) / 2, "Logging out...");
+                        attroff(A_BOLD);
+                        
+                        // Countdown animation
+                        for (int i = 3; i > 0; i--) {
+                            mvprintw(height/2, (width - 10) / 2, "Goodbye in %d", i);
+                            refresh();
+                            napms(400);
+                        }
+                        
+                        mvprintw(height/2, (width - 20) / 2, "Goodbye! Thank you!");
+                        refresh();
+                        napms(700);
+                        return;
+                    } else {
+                        // Execute the command and show results
+                        current_mode = menu_items[current_selection];
+                        std::string command = menu_commands[current_selection];
+                        response_text = send_command_and_get_response(command);
+                        in_submenu = true;
+                    }
+                    break;
+                    
+                case 'q':
+                case 'Q':
+                    // Quick exit
+                    clear();
+                    mvprintw(height/2, (width - 15) / 2, "Logging out...");
+                    refresh();
+                    napms(500);
+                    return;
+            }
+        }
     }
     
-    // Clean up windows
-    delwin(output_pad);
-    delwin(output_win);
-    delwin(cmd_win);
-    delwin(instructions);
-    delwin(user_info);
-    
-    // Exit command interface
+    // Exit menu interface
     clear();
 }
 
