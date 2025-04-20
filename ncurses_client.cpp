@@ -288,15 +288,17 @@ bool username_form() {
     
     // Print login instructions centered
     wattron(form_win, A_BOLD);
-    mvwprintw(form_win, 2, (form_width - 30) / 2, "PLEASE LOGIN OR CREATE AN ACCOUNT");
+    mvwprintw(form_win, 2, (form_width - 30) / 2, "USER LOGIN / CREATE ACCOUNT");
     wattroff(form_win, A_BOLD);
     
-    // Basic instructions centered
-    mvwprintw(form_win, 4, (form_width - 47) / 2, "Enter your username to login or create a new account");
+    // Consistent vertical spacing between forms - add additional line for alignment
+    mvwprintw(form_win, 3, (form_width - 40) / 2, "Welcome! Please enter your username below.");
     
-    // Remove Username label and use placeholder inside the input window
-    // Create the input window with border
-    WINDOW* input_win = newwin(3, 40, (height - form_height) / 2 + 5, (width - 40) / 2);
+    // Basic instructions centered - moved to line 5 to match password form
+    mvwprintw(form_win, 5, (form_width - 47) / 2, "Enter your username to login or create a new account");
+    
+    // Create the input window with border at the same position as password form
+    WINDOW* input_win = newwin(3, 40, (height - form_height) / 2 + 8, (width - 40) / 2);
     set_border_color(input_win);
     box(input_win, 0, 0);
     unset_border_color(input_win);
@@ -353,7 +355,7 @@ bool username_form() {
                 if (has_colors()) {
                     wattron(form_win, COLOR_PAIR(3)); // Red text for error
                 }
-                mvwprintw(form_win, 8, (form_width - 45) / 2, "Username cannot be empty. Please enter a username.");
+                mvwprintw(form_win, 10, (form_width - 45) / 2, "Username cannot be empty. Please enter a username.");
                 if (has_colors()) {
                     wattroff(form_win, COLOR_PAIR(3));
                 }
@@ -376,7 +378,7 @@ bool username_form() {
             }
             
             // Show checking message in the form window
-            mvwprintw(form_win, 8, (form_width - 20) / 2, "Checking username...");
+            mvwprintw(form_win, 10, (form_width - 20) / 2, "Checking username...");
             wrefresh(form_win);
             
             // Send USER command to check if user exists
@@ -486,7 +488,7 @@ bool password_form(const std::string& username, bool is_new_user) {
     
     // Calculate centered positions - make the form wider and taller
     int form_width = 70;  // Increased width
-    int form_height = is_new_user ? 18 : 14; // Increased height
+    int form_height = 14; // Same height for both forms
     int start_x = (width - form_width) / 2;
     int start_y = (height - form_height) / 2;
     
@@ -506,22 +508,20 @@ bool password_form(const std::string& username, bool is_new_user) {
     if (is_new_user) {
         mvwprintw(form_win, 2, (form_width - 16) / 2, "CREATE NEW ACCOUNT");
         mvwprintw(form_win, 3, (form_width - 45) / 2, "Welcome, %s! You're creating a new account.", username.c_str());
-    } else {
-        mvwprintw(form_win, 2, (form_width - 10) / 2, "USER LOGIN");
-        mvwprintw(form_win, 3, (form_width - 45) / 2, "Welcome back, %s! Please enter your password.", username.c_str());
-    }
-    wattroff(form_win, A_BOLD);
-    
-    // Instructions with more details - centered
-    if (is_new_user) {
+        
+        // Instructions with more details for new users
         mvwprintw(form_win, 5, (form_width - 43) / 2, "Please choose a password for your new account");
         mvwprintw(form_win, 6, (form_width - 40) / 2, "(You'll need to enter it twice for verification)");
     } else {
+        mvwprintw(form_win, 2, (form_width - 10) / 2, "USER LOGIN");
+        mvwprintw(form_win, 3, (form_width - 42) / 2, "Welcome back, %s! Please enter your password.", username.c_str());
+        
+        // Instructions for returning users
         mvwprintw(form_win, 5, (form_width - 33) / 2, "Please enter your password to log in");
     }
+    wattroff(form_win, A_BOLD);
     
-    // Remove password label and just create the input window
-    // Create password input window with border
+    // Create password input window with border at consistent position
     WINDOW* pass_win = newwin(3, 40, (height - form_height) / 2 + 8, (width - 40) / 2);
     set_border_color(pass_win);
     box(pass_win, 0, 0);
@@ -535,6 +535,9 @@ bool password_form(const std::string& username, bool is_new_user) {
     // If it's a new user, create a confirmation window too
     WINDOW* confirm_win = nullptr;
     if (is_new_user) {
+        // Use a separate form height for new users that need confirmation
+        form_height = 18;
+        
         confirm_win = newwin(3, 40, (height - form_height) / 2 + 12, (width - 40) / 2);
         set_border_color(confirm_win);
         box(confirm_win, 0, 0);
@@ -595,7 +598,7 @@ bool password_form(const std::string& username, bool is_new_user) {
                 if (has_colors()) {
                     wattron(form_win, COLOR_PAIR(3)); // Red text for error
                 }
-                mvwprintw(form_win, is_new_user ? 13 : 10, (form_width - 47) / 2, "Password cannot be empty. Please enter a password.");
+                mvwprintw(form_win, 10, (form_width - 47) / 2, "Password cannot be empty. Please enter a password.");
                 if (has_colors()) {
                     wattroff(form_win, COLOR_PAIR(3));
                 }
@@ -623,7 +626,7 @@ bool password_form(const std::string& username, bool is_new_user) {
                 bool confirm_first_keypress = true;
                 
                 // Clear any previous error message
-                mvwprintw(form_win, 13, 2, "                                                      ");
+                mvwprintw(form_win, 10, 2, "                                                      ");
                 wrefresh(form_win);
                 
                 // Move to confirmation field
@@ -695,7 +698,7 @@ bool password_form(const std::string& username, bool is_new_user) {
                     if (has_colors()) {
                         wattron(form_win, COLOR_PAIR(3)); // Red text for error
                     }
-                    mvwprintw(form_win, 13, (form_width - 40) / 2, "Passwords do not match. Please try again.");
+                    mvwprintw(form_win, 10, (form_width - 40) / 2, "Passwords do not match. Please try again.");
                     if (has_colors()) {
                         wattroff(form_win, COLOR_PAIR(3));
                     }
