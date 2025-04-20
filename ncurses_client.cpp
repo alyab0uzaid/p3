@@ -667,18 +667,32 @@ bool password_form(const std::string& username, bool is_new_user) {
                     attroff(A_BOLD);
                     
                     // Create loading animation
-                    mvprintw(height/2, (width - 19) / 2, "Loading main menu...");
+                    if (has_colors()) {
+                        attron(COLOR_PAIR(2)); // Green text for success message
+                    }
+                    attron(A_BOLD);
+                    mvprintw(height/2, (width - 34) / 2, "SUCCESS! LOGGING IN TO SYSTEM...");
+                    attroff(A_BOLD);
+                    if (has_colors()) {
+                        attroff(COLOR_PAIR(2));
+                    }
                     
                     // Progress bar box
                     WINDOW* progress_win = newwin(3, 52, height/2 + 2, (width - 52) / 2);
                     box(progress_win, 0, 0);
                     wrefresh(progress_win);
                     
-                    // Animate the loading bar
+                    // Animate the loading bar with green hashes
+                    if (has_colors()) {
+                        wattron(progress_win, COLOR_PAIR(2)); // Green for hash characters
+                    }
                     for (int i = 0; i < 50; i++) {
-                        mvwaddch(progress_win, 1, i + 1, ACS_BLOCK);
+                        mvwaddch(progress_win, 1, i + 1, '#'); // Use hash character instead of block
                         wrefresh(progress_win);
                         napms(30); // Short delay for animation
+                    }
+                    if (has_colors()) {
+                        wattroff(progress_win, COLOR_PAIR(2));
                     }
                     
                     // Clean up
@@ -755,18 +769,32 @@ bool password_form(const std::string& username, bool is_new_user) {
                     attroff(A_BOLD);
                     
                     // Create loading animation
-                    mvprintw(height/2, (width - 19) / 2, "Loading main menu...");
+                    if (has_colors()) {
+                        attron(COLOR_PAIR(2)); // Green text for success message
+                    }
+                    attron(A_BOLD);
+                    mvprintw(height/2, (width - 34) / 2, "SUCCESS! LOGGING IN TO SYSTEM...");
+                    attroff(A_BOLD);
+                    if (has_colors()) {
+                        attroff(COLOR_PAIR(2));
+                    }
                     
                     // Progress bar box
                     WINDOW* progress_win = newwin(3, 52, height/2 + 2, (width - 52) / 2);
                     box(progress_win, 0, 0);
                     wrefresh(progress_win);
                     
-                    // Animate the loading bar
+                    // Animate the loading bar with green hashes
+                    if (has_colors()) {
+                        wattron(progress_win, COLOR_PAIR(2)); // Green for hash characters
+                    }
                     for (int i = 0; i < 50; i++) {
-                        mvwaddch(progress_win, 1, i + 1, ACS_BLOCK);
+                        mvwaddch(progress_win, 1, i + 1, '#'); // Use hash character instead of block
                         wrefresh(progress_win);
                         napms(30); // Short delay for animation
+                    }
+                    if (has_colors()) {
+                        wattroff(progress_win, COLOR_PAIR(2));
                     }
                     
                     // Clean up
