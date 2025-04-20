@@ -644,29 +644,40 @@ bool password_form(const std::string& username, bool is_new_user) {
                     // Clean up the message window
                     delwin(msg_win);
                     
-                    // Create a nicer success message box
-                    WINDOW* success_win = newwin(10, 50, (height - 10) / 2, (width - 50) / 2);
-                    box(success_win, 0, 0);
+                    // Create a full-screen loading screen with animation
+                    clear();
+                    refresh();
                     
-                    // Add title with inverse colors for emphasis
-                    wattron(success_win, A_BOLD);
+                    // Show success message and loading animation
+                    attron(A_BOLD);
                     if (has_colors()) {
-                        wattron(success_win, COLOR_PAIR(2)); // Green for success
+                        attron(COLOR_PAIR(2)); // Green for success
                     }
-                    mvwprintw(success_win, 0, (50 - 17) / 2, " SUCCESS ");
+                    mvprintw(height/4, (width - 26) / 2, "ACCOUNT CREATED SUCCESSFULLY!");
                     if (has_colors()) {
-                        wattroff(success_win, COLOR_PAIR(2));
+                        attroff(COLOR_PAIR(2));
                     }
-                    wattroff(success_win, A_BOLD);
+                    attroff(A_BOLD);
                     
-                    // Success messages
-                    mvwprintw(success_win, 3, (50 - 26) / 2, "Account created successfully!");
-                    mvwprintw(success_win, 5, (50 - 32) / 2, "Welcome to the Game Rental System!");
-                    mvwprintw(success_win, 8, (50 - 26) / 2, "Press any key to continue...");
+                    mvprintw(height/4 + 2, (width - 32) / 2, "Welcome to the Game Rental System!");
                     
-                    wrefresh(success_win);
-                    wgetch(success_win);
-                    delwin(success_win);
+                    // Create loading animation
+                    mvprintw(height/2, (width - 19) / 2, "Loading main menu...");
+                    
+                    // Progress bar box
+                    WINDOW* progress_win = newwin(3, 52, height/2 + 2, (width - 52) / 2);
+                    box(progress_win, 0, 0);
+                    wrefresh(progress_win);
+                    
+                    // Animate the loading bar
+                    for (int i = 0; i < 50; i++) {
+                        mvwaddch(progress_win, 1, i + 1, ACS_BLOCK);
+                        wrefresh(progress_win);
+                        napms(30); // Short delay for animation
+                    }
+                    
+                    // Clean up
+                    delwin(progress_win);
                     
                     is_authenticated = true;
                     current_user = username;
@@ -716,29 +727,40 @@ bool password_form(const std::string& username, bool is_new_user) {
                     delwin(pass_win);
                     delwin(form_win);
                     
-                    // Create a nicer success message box
-                    WINDOW* success_win = newwin(10, 50, (height - 10) / 2, (width - 50) / 2);
-                    box(success_win, 0, 0);
+                    // Create a full-screen loading screen with animation
+                    clear();
+                    refresh();
                     
-                    // Add title with inverse colors for emphasis
-                    wattron(success_win, A_BOLD);
+                    // Show success message and loading animation
+                    attron(A_BOLD);
                     if (has_colors()) {
-                        wattron(success_win, COLOR_PAIR(2)); // Green for success
+                        attron(COLOR_PAIR(2)); // Green for success
                     }
-                    mvwprintw(success_win, 0, (50 - 17) / 2, " SUCCESS ");
+                    mvprintw(height/4, (width - 16) / 2, "LOGIN SUCCESSFUL!");
                     if (has_colors()) {
-                        wattroff(success_win, COLOR_PAIR(2));
+                        attroff(COLOR_PAIR(2));
                     }
-                    wattroff(success_win, A_BOLD);
+                    attroff(A_BOLD);
                     
-                    // Success messages
-                    mvwprintw(success_win, 3, (50 - 16) / 2, "Login successful!");
-                    mvwprintw(success_win, 5, (50 - 37) / 2, "Welcome back to the Game Rental System!");
-                    mvwprintw(success_win, 8, (50 - 26) / 2, "Press any key to continue...");
+                    mvprintw(height/4 + 2, (width - 37) / 2, "Welcome back to the Game Rental System!");
                     
-                    wrefresh(success_win);
-                    wgetch(success_win);
-                    delwin(success_win);
+                    // Create loading animation
+                    mvprintw(height/2, (width - 19) / 2, "Loading main menu...");
+                    
+                    // Progress bar box
+                    WINDOW* progress_win = newwin(3, 52, height/2 + 2, (width - 52) / 2);
+                    box(progress_win, 0, 0);
+                    wrefresh(progress_win);
+                    
+                    // Animate the loading bar
+                    for (int i = 0; i < 50; i++) {
+                        mvwaddch(progress_win, 1, i + 1, ACS_BLOCK);
+                        wrefresh(progress_win);
+                        napms(30); // Short delay for animation
+                    }
+                    
+                    // Clean up
+                    delwin(progress_win);
                     
                     is_authenticated = true;
                     current_user = username;
@@ -801,129 +823,180 @@ bool password_form(const std::string& username, bool is_new_user) {
     return false;
 }
 
-// Command interface - simple version
+// Command interface - enhanced version
 void command_interface() {
     clear();
     
-    // Create simple window layout
+    // Get screen dimensions
+    int height, width;
+    getmaxyx(stdscr, height, width);
+    
+    // Create a styled window layout with box drawing characters
     box(stdscr, 0, 0);
     
-    // Draw headers without conditional colors
-    attron(A_BOLD);
-    mvprintw(2, 2, "GAME RENTAL SYSTEM - LOGGED IN AS: %s", current_user.c_str());
-    attroff(A_BOLD);
-    
-    mvprintw(4, 2, "Type commands and press Enter. Type 'HELP' for list of commands.");
-    mvprintw(5, 2, "Type 'EXIT' to log out and exit.");
-    
-    // Draw separator
-    for (int i = 1; i < COLS-1; i++) {
-        mvaddch(6, i, '-');
+    // Create a header with color background if colors available
+    if (has_colors()) {
+        attron(COLOR_PAIR(1)); // White on blue for header
+    }
+    for (int i = 0; i < width; i++) {
+        mvaddch(0, i, ' ');
     }
     
-    // Main command loop
-    char cmd_buf[256];
-    int current_line = 8;
-    int max_display_line = LINES - 4;
+    // Draw title in the header
+    attron(A_BOLD);
+    mvprintw(0, (width - 31) / 2, "GAME RENTAL SYSTEM");
+    attroff(A_BOLD);
+    
+    if (has_colors()) {
+        attroff(COLOR_PAIR(1));
+    }
+    
+    // Draw user info with a box
+    WINDOW* user_info = newwin(3, width - 4, 2, 2);
+    box(user_info, 0, 0);
+    mvwprintw(user_info, 0, 2, " User Info ");
+    mvwprintw(user_info, 1, 2, "Logged in as: %s", current_user.c_str());
+    wrefresh(user_info);
+    
+    // Instructions panel
+    WINDOW* instructions = newwin(3, width - 4, 6, 2);
+    box(instructions, 0, 0);
+    mvwprintw(instructions, 0, 2, " Help ");
+    mvwprintw(instructions, 1, 2, "Type commands and press Enter. Type 'HELP' for list of commands. Type 'EXIT' to log out.");
+    wrefresh(instructions);
+    
+    // Create command output area
+    WINDOW* output_win = newwin(height - 14, width - 4, 10, 2);
+    box(output_win, 0, 0);
+    mvwprintw(output_win, 0, 2, " Command Output ");
+    wrefresh(output_win);
+    
+    // Create scrolling pad for command output
+    // Pad needs to be larger than visible area to allow scrolling
+    WINDOW* output_pad = newpad(500, width - 6); // 500 lines should be enough for most outputs
+    
+    // Current position in the output pad
+    int pad_pos = 0;
     
     // Display help at start
     std::string help_response = send_command_and_get_response("HELP");
-    attron(A_BOLD);
-    mvprintw(current_line++, 2, "Available commands:");
-    attroff(A_BOLD);
+    wattron(output_pad, A_BOLD);
+    mvwprintw(output_pad, pad_pos++, 0, "Available commands:");
+    wattroff(output_pad, A_BOLD);
     
     std::istringstream help_stream(help_response);
     std::string line;
     while (std::getline(help_stream, line)) {
-        mvprintw(current_line++, 4, "%s", line.c_str());
-        if (current_line >= max_display_line) {
-            current_line = 8; // Reset if we've filled the screen
-            mvprintw(LINES-2, 2, "Press any key to continue...");
-            getch();
-            // Clear command area
-            for (int i = 8; i < max_display_line; i++) {
-                move(i, 1);
-                clrtoeol();
-            }
-        }
+        mvwprintw(output_pad, pad_pos++, 2, "%s", line.c_str());
     }
     
-    current_line += 2;
+    // Show the pad content in the visible area
+    prefresh(output_pad, 0, 0, 11, 3, height - 5, width - 5);
     
-    // Position for command input
+    pad_pos += 1; // Add an extra blank line
+    
+    // Create a command input bar at the bottom
+    WINDOW* cmd_win = newwin(3, width - 4, height - 4, 2);
+    box(cmd_win, 0, 0);
+    mvwprintw(cmd_win, 0, 2, " Enter Command ");
+    wrefresh(cmd_win);
+    
+    // Command input loop
     while (true) {
-        // Move to command line
-        attron(A_BOLD);
-        mvprintw(LINES-3, 2, "Command: ");
-        attroff(A_BOLD);
-        clrtoeol(); // Clear any previous command
+        // Draw Command prompt
+        wmove(cmd_win, 1, 2);
+        wclrtoeol(cmd_win); // Clear previous command
+        wattron(cmd_win, A_BOLD);
+        mvwprintw(cmd_win, 1, 2, "Command: ");
+        wattroff(cmd_win, A_BOLD);
+        wrefresh(cmd_win);
         
-        // Make sure cursor is visible
+        // Make cursor visible and position it for input
         curs_set(1);
-        move(LINES-3, 11); // Position at command input
-        refresh();
         
         // Get user input
+        char cmd_buf[256] = {0};
         echo(); // Show typing
-        getnstr(cmd_buf, 255);
+        mvwgetnstr(cmd_win, 1, 11, cmd_buf, 255);
         noecho(); // Hide typing for next iteration
         
         std::string command(cmd_buf);
         
         // Handle exit
         if (command == "EXIT" || command == "exit") {
+            // Create a nice goodbye animation
             clear();
             box(stdscr, 0, 0);
-            mvprintw(LINES/2, COLS/2 - 10, "Logging out... Goodbye!");
+            
+            attron(A_BOLD);
+            mvprintw(height/2 - 2, (width - 20) / 2, "Logging out...");
+            attroff(A_BOLD);
+            
+            // Countdown animation
+            for (int i = 3; i > 0; i--) {
+                mvprintw(height/2, (width - 10) / 2, "Goodbye in %d", i);
+                refresh();
+                napms(400);
+            }
+            
+            mvprintw(height/2, (width - 20) / 2, "Goodbye! Thank you!");
             refresh();
-            napms(1500); // Show goodbye message for 1.5 seconds
+            napms(700);
             break;
         }
         
-        // Scroll screen if needed
-        if (current_line >= max_display_line - 5) { // Leave room for response
-            // Clear command area
-            for (int i = 8; i < max_display_line; i++) {
-                move(i, 1);
-                clrtoeol();
-            }
-            current_line = 8;
+        // Skip empty commands
+        if (command.empty()) {
+            continue;
         }
         
-        // Show command
-        attron(A_BOLD);
-        mvprintw(current_line++, 2, "> %s", command.c_str());
-        attroff(A_BOLD);
+        // Show command in output with some styling
+        wattron(output_pad, A_BOLD);
+        if (has_colors()) {
+            wattron(output_pad, COLOR_PAIR(4)); // Yellow for commands
+        }
+        mvwprintw(output_pad, pad_pos++, 0, "> %s", command.c_str());
+        if (has_colors()) {
+            wattroff(output_pad, COLOR_PAIR(4));
+        }
+        wattroff(output_pad, A_BOLD);
         
         // Process command
         std::string response = send_command_and_get_response(command);
         
-        // Display response
+        // Display response with wrapping if needed
         std::istringstream iss(response);
         std::string resp_line;
         while (std::getline(iss, resp_line)) {
-            if (current_line >= max_display_line - 1) {
-                mvprintw(LINES-2, 2, "Press any key to continue...");
-                getch();
-                
-                // Clear command area
-                for (int i = 8; i < max_display_line; i++) {
-                    move(i, 1);
-                    clrtoeol();
+            // Handle long lines with wrap
+            int max_width = width - 10; // Leave some room from edges
+            if ((int)resp_line.length() > max_width) {
+                for (size_t i = 0; i < resp_line.length(); i += max_width) {
+                    mvwprintw(output_pad, pad_pos++, 2, "%s", 
+                             resp_line.substr(i, std::min((size_t)max_width, resp_line.length() - i)).c_str());
                 }
-                current_line = 8;
-                
-                // Show command again as context
-                attron(A_BOLD);
-                mvprintw(current_line++, 2, "> %s (continued)", command.c_str());
-                attroff(A_BOLD);
+            } else {
+                mvwprintw(output_pad, pad_pos++, 2, "%s", resp_line.c_str());
             }
-            
-            mvprintw(current_line++, 4, "%s", resp_line.c_str());
         }
         
-        current_line++; // Add a blank line after each command response
+        // Add a blank line after response
+        pad_pos++;
+        
+        // Calculate visible area and scroll if needed
+        int visible_height = height - 16; // Height of visible output area
+        int scroll_start = (pad_pos > visible_height) ? pad_pos - visible_height : 0;
+        
+        // Show the updated pad content
+        prefresh(output_pad, scroll_start, 0, 11, 3, height - 5, width - 5);
     }
+    
+    // Clean up windows
+    delwin(output_pad);
+    delwin(output_win);
+    delwin(cmd_win);
+    delwin(instructions);
+    delwin(user_info);
     
     // Exit command interface
     clear();
