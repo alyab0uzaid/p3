@@ -893,15 +893,27 @@ bool password_form(const std::string& username, bool is_new_user) {
     return false;
 }
 
-// Menu-based interface
+// Interactive menu-based interface with nested menus
 void command_interface() {
     // Get screen dimensions
     int height, width;
     getmaxyx(stdscr, height, width);
     
-    // Define menu options
-    const int NUM_MENU_ITEMS = 7;
-    const char* menu_items[NUM_MENU_ITEMS] = {
+    // Define menu levels
+    enum MenuLevel {
+        MAIN_MENU,
+        BROWSE_MENU,
+        RENT_MENU,
+        MYGAMES_MENU,
+        GAME_DETAILS,
+        SEARCH_RESULTS,
+        HISTORY_DISPLAY,
+        RECOMMEND_DISPLAY
+    };
+    
+    // Define main menu options
+    const int NUM_MAIN_MENU_ITEMS = 7;
+    const char* main_menu_items[NUM_MAIN_MENU_ITEMS] = {
         "Browse Games",
         "Rent a Game",
         "My Games",
@@ -911,22 +923,43 @@ void command_interface() {
         "Log Out"
     };
     
-    // Associated commands for each menu item
-    const char* menu_commands[NUM_MENU_ITEMS] = {
-        "BROWSE",
-        "RENT",
-        "MYGAMES",
-        "SEARCH",
-        "HISTORY",
-        "RECOMMEND",
-        "EXIT"
+    // Define browse submenu options
+    const int NUM_BROWSE_ITEMS = 4;
+    const char* browse_menu_items[NUM_BROWSE_ITEMS] = {
+        "List All Games",
+        "List by Genre",
+        "List by Platform",
+        "Back to Main Menu"
+    };
+    
+    // Define rent submenu options
+    const int NUM_RENT_ITEMS = 3;
+    const char* rent_menu_items[NUM_RENT_ITEMS] = {
+        "Checkout Game",
+        "Return Game",
+        "Back to Main Menu"
+    };
+    
+    // Define my games submenu options
+    const int NUM_MYGAMES_ITEMS = 4;
+    const char* mygames_menu_items[NUM_MYGAMES_ITEMS] = {
+        "Currently Rented Games",
+        "Rate a Game",
+        "View Recommendations",
+        "Back to Main Menu"
     };
     
     // Initialize menu state
-    int current_selection = 0;
-    bool in_submenu = false;
-    std::string current_mode = "";
+    MenuLevel current_level = MAIN_MENU;
+    int main_selection = 0;
+    int submenu_selection = 0;
     std::string response_text = "";
+    std::string search_query = "";
+    std::string selected_game = "";
+    std::string selected_genre = "";
+    std::string selected_platform = "";
+    std::vector<std::string> game_list;
+    int list_selection = 0;
     
     // Main menu loop
     while (true) {
@@ -958,80 +991,309 @@ void command_interface() {
         mvprintw(2, 2, "User: %s", current_user.c_str());
         attroff(A_BOLD);
         
-        // Display current mode if in a submenu
-        if (in_submenu && !current_mode.empty()) {
-            attron(A_BOLD);
-            if (has_colors()) {
-                attron(COLOR_PAIR(4)); // Yellow for mode
-            }
-            mvprintw(2, width - 20, "Mode: %s", current_mode.c_str());
-            if (has_colors()) {
-                attroff(COLOR_PAIR(4));
-            }
-            attroff(A_BOLD);
-        }
-        
         // Horizontal separator
         for (int i = 1; i < width - 1; i++) {
             mvaddch(3, i, ACS_HLINE);
         }
         
-        // Display menu or submenu content
-        if (!in_submenu) {
-            // Main menu title
-            attron(A_BOLD);
-            mvprintw(5, (width - 9) / 2, "MAIN MENU");
-            attroff(A_BOLD);
-            
-            // Display menu items
-            for (int i = 0; i < NUM_MENU_ITEMS; i++) {
-                // Highlight current selection
-                if (i == current_selection) {
-                    attron(A_REVERSE);
-                    if (has_colors()) {
-                        attron(COLOR_PAIR(2)); // Green highlight
+        // Display the appropriate menu based on current level
+        switch (current_level) {
+            case MAIN_MENU: {
+                // Main menu title
+                attron(A_BOLD);
+                if (has_colors()) {
+                    attron(COLOR_PAIR(4)); // Yellow for title
+                }
+                mvprintw(5, (width - 9) / 2, "MAIN MENU");
+                if (has_colors()) {
+                    attroff(COLOR_PAIR(4));
+                }
+                attroff(A_BOLD);
+                
+                // Display menu items
+                for (int i = 0; i < NUM_MAIN_MENU_ITEMS; i++) {
+                    // Highlight current selection
+                    if (i == main_selection) {
+                        attron(A_REVERSE);
+                        if (has_colors()) {
+                            attron(COLOR_PAIR(2)); // Green highlight
+                        }
+                    }
+                    
+                    // Center the menu item
+                    mvprintw(7 + i, (width - strlen(main_menu_items[i])) / 2, "%s", main_menu_items[i]);
+                    
+                    if (i == main_selection) {
+                        attroff(A_REVERSE);
+                        if (has_colors()) {
+                            attroff(COLOR_PAIR(2));
+                        }
                     }
                 }
                 
-                // Center the menu item
-                mvprintw(7 + i, (width - strlen(menu_items[i])) / 2, "%s", menu_items[i]);
+                // Instructions
+                mvprintw(height - 3, 2, "Use UP/DOWN to navigate, ENTER to select, Q to quit");
+                break;
+            }
                 
-                if (i == current_selection) {
-                    attroff(A_REVERSE);
-                    if (has_colors()) {
-                        attroff(COLOR_PAIR(2));
+            case BROWSE_MENU: {
+                // Browse menu title
+                attron(A_BOLD);
+                if (has_colors()) {
+                    attron(COLOR_PAIR(4)); // Yellow for title
+                }
+                mvprintw(5, (width - 12) / 2, "BROWSE GAMES");
+                if (has_colors()) {
+                    attroff(COLOR_PAIR(4));
+                }
+                attroff(A_BOLD);
+                
+                // Display browse submenu
+                for (int i = 0; i < NUM_BROWSE_ITEMS; i++) {
+                    // Highlight current selection
+                    if (i == submenu_selection) {
+                        attron(A_REVERSE);
+                        if (has_colors()) {
+                            attron(COLOR_PAIR(2)); // Green highlight
+                        }
+                    }
+                    
+                    // Center the menu item
+                    mvprintw(7 + i, (width - strlen(browse_menu_items[i])) / 2, "%s", browse_menu_items[i]);
+                    
+                    if (i == submenu_selection) {
+                        attroff(A_REVERSE);
+                        if (has_colors()) {
+                            attroff(COLOR_PAIR(2));
+                        }
                     }
                 }
+                
+                // Instructions
+                mvprintw(height - 3, 2, "Use UP/DOWN to navigate, ENTER to select, ESC to go back");
+                break;
             }
-            
-            // Instructions
-            mvprintw(height - 3, 2, "Use UP/DOWN to navigate, ENTER to select, Q to quit");
-        } else {
-            // Submenu/command output display
-            // Create a content area for command output
-            WINDOW* output_win = newwin(height - 7, width - 4, 5, 2);
-            box(output_win, 0, 0);
-            
-            // Add title to the output window
-            wattron(output_win, A_BOLD);
-            mvwprintw(output_win, 0, 2, " %s Results ", current_mode.c_str());
-            wattroff(output_win, A_BOLD);
-            
-            // Display command response
-            int line = 1;
-            std::istringstream iss(response_text);
-            std::string resp_line;
-            while (std::getline(iss, resp_line) && line < height - 9) {
-                mvwprintw(output_win, line++, 2, "%s", resp_line.c_str());
+                
+            case RENT_MENU: {
+                // Rent menu title
+                attron(A_BOLD);
+                if (has_colors()) {
+                    attron(COLOR_PAIR(4)); // Yellow for title
+                }
+                mvprintw(5, (width - 16) / 2, "RENT/RETURN GAMES");
+                if (has_colors()) {
+                    attroff(COLOR_PAIR(4));
+                }
+                attroff(A_BOLD);
+                
+                // Display rent submenu
+                for (int i = 0; i < NUM_RENT_ITEMS; i++) {
+                    // Highlight current selection
+                    if (i == submenu_selection) {
+                        attron(A_REVERSE);
+                        if (has_colors()) {
+                            attron(COLOR_PAIR(2)); // Green highlight
+                        }
+                    }
+                    
+                    // Center the menu item
+                    mvprintw(7 + i, (width - strlen(rent_menu_items[i])) / 2, "%s", rent_menu_items[i]);
+                    
+                    if (i == submenu_selection) {
+                        attroff(A_REVERSE);
+                        if (has_colors()) {
+                            attroff(COLOR_PAIR(2));
+                        }
+                    }
+                }
+                
+                // Instructions
+                mvprintw(height - 3, 2, "Use UP/DOWN to navigate, ENTER to select, ESC to go back");
+                break;
             }
-            
-            wrefresh(output_win);
-            
-            // Instructions for submenu
-            mvprintw(height - 3, 2, "Press ESC to return to main menu");
-            
-            // Clean up
-            delwin(output_win);
+                
+            case MYGAMES_MENU: {
+                // My Games menu title
+                attron(A_BOLD);
+                if (has_colors()) {
+                    attron(COLOR_PAIR(4)); // Yellow for title
+                }
+                mvprintw(5, (width - 8) / 2, "MY GAMES");
+                if (has_colors()) {
+                    attroff(COLOR_PAIR(4));
+                }
+                attroff(A_BOLD);
+                
+                // Display my games submenu
+                for (int i = 0; i < NUM_MYGAMES_ITEMS; i++) {
+                    // Highlight current selection
+                    if (i == submenu_selection) {
+                        attron(A_REVERSE);
+                        if (has_colors()) {
+                            attron(COLOR_PAIR(2)); // Green highlight
+                        }
+                    }
+                    
+                    // Center the menu item
+                    mvprintw(7 + i, (width - strlen(mygames_menu_items[i])) / 2, "%s", mygames_menu_items[i]);
+                    
+                    if (i == submenu_selection) {
+                        attroff(A_REVERSE);
+                        if (has_colors()) {
+                            attroff(COLOR_PAIR(2));
+                        }
+                    }
+                }
+                
+                // Instructions
+                mvprintw(height - 3, 2, "Use UP/DOWN to navigate, ENTER to select, ESC to go back");
+                break;
+            }
+                
+            case GAME_DETAILS: {
+                // Game details title
+                attron(A_BOLD);
+                if (has_colors()) {
+                    attron(COLOR_PAIR(4)); // Yellow for title
+                }
+                mvprintw(5, (width - 12) / 2, "GAME DETAILS");
+                if (has_colors()) {
+                    attroff(COLOR_PAIR(4));
+                }
+                attroff(A_BOLD);
+                
+                // Create a content area for game details
+                WINDOW* details_win = newwin(height - 10, width - 8, 7, 4);
+                box(details_win, 0, 0);
+                
+                // Display game details
+                if (!selected_game.empty()) {
+                    wattron(details_win, A_BOLD);
+                    mvwprintw(details_win, 1, 2, "Selected Game: %s", selected_game.c_str());
+                    wattroff(details_win, A_BOLD);
+                    
+                    // Get game details from server
+                    std::string details = send_command_and_get_response("SHOW " + selected_game);
+                    
+                    // Parse and display details nicely
+                    int line = 3;
+                    std::istringstream iss(details);
+                    std::string detail_line;
+                    while (std::getline(iss, detail_line) && line < height - 14) {
+                        // Format each line with a bullet point
+                        if (!detail_line.empty() && detail_line[0] != '-') {
+                            detail_line = "• " + detail_line;
+                        }
+                        mvwprintw(details_win, line++, 2, "%s", detail_line.c_str());
+                    }
+                    
+                    // Add action buttons
+                    wattron(details_win, A_BOLD);
+                    mvwprintw(details_win, height - 16, (width - 40) / 2, "Press R to rent this game, ESC to go back");
+                    wattroff(details_win, A_BOLD);
+                }
+                
+                wrefresh(details_win);
+                
+                // Instructions
+                mvprintw(height - 3, 2, "Press ESC to go back, R to rent this game");
+                
+                // Clean up
+                delwin(details_win);
+                break;
+            }
+                
+            case SEARCH_RESULTS: {
+                // Search results title
+                attron(A_BOLD);
+                if (has_colors()) {
+                    attron(COLOR_PAIR(4)); // Yellow for title
+                }
+                mvprintw(5, (width - 13) / 2, "SEARCH RESULTS");
+                if (has_colors()) {
+                    attroff(COLOR_PAIR(4));
+                }
+                attroff(A_BOLD);
+                
+                // Show search query
+                mvprintw(6, 4, "Search Query: %s", search_query.c_str());
+                
+                // Create a content area for search results
+                WINDOW* results_win = newwin(height - 12, width - 8, 8, 4);
+                box(results_win, 0, 0);
+                
+                // Display search results as a selectable list
+                if (!game_list.empty()) {
+                    int start_idx = (list_selection / (height - 16)) * (height - 16);
+                    int end_idx = std::min(start_idx + (height - 16), (int)game_list.size());
+                    
+                    for (int i = start_idx; i < end_idx; i++) {
+                        // Highlight current selection
+                        if (i == list_selection) {
+                            wattron(results_win, A_REVERSE);
+                            if (has_colors()) {
+                                wattron(results_win, COLOR_PAIR(2)); // Green highlight
+                            }
+                        }
+                        
+                        mvwprintw(results_win, i - start_idx + 1, 2, "%s", game_list[i].c_str());
+                        
+                        if (i == list_selection) {
+                            wattroff(results_win, A_REVERSE);
+                            if (has_colors()) {
+                                wattroff(results_win, COLOR_PAIR(2));
+                            }
+                        }
+                    }
+                } else {
+                    mvwprintw(results_win, 1, 2, "No games found matching your search.");
+                }
+                
+                wrefresh(results_win);
+                
+                // Instructions
+                mvprintw(height - 3, 2, "Use UP/DOWN to navigate, ENTER to view details, ESC to go back");
+                
+                // Clean up
+                delwin(results_win);
+                break;
+            }
+                
+            case HISTORY_DISPLAY:
+            case RECOMMEND_DISPLAY: {
+                // Results title
+                attron(A_BOLD);
+                if (has_colors()) {
+                    attron(COLOR_PAIR(4)); // Yellow for title
+                }
+                mvprintw(5, (width - (current_level == HISTORY_DISPLAY ? 13 : 18)) / 2, 
+                         current_level == HISTORY_DISPLAY ? "RENTAL HISTORY" : "RECOMMENDATIONS");
+                if (has_colors()) {
+                    attroff(COLOR_PAIR(4));
+                }
+                attroff(A_BOLD);
+                
+                // Create a content area for results
+                WINDOW* results_win = newwin(height - 10, width - 8, 7, 4);
+                box(results_win, 0, 0);
+                
+                // Display results
+                int line = 1;
+                std::istringstream iss(response_text);
+                std::string resp_line;
+                while (std::getline(iss, resp_line) && line < height - 12) {
+                    mvwprintw(results_win, line++, 2, "%s", resp_line.c_str());
+                }
+                
+                wrefresh(results_win);
+                
+                // Instructions
+                mvprintw(height - 3, 2, "Press ESC to go back to main menu");
+                
+                // Clean up
+                delwin(results_win);
+                break;
+            }
         }
         
         // Refresh screen
@@ -1044,63 +1306,350 @@ void command_interface() {
         
         int ch = getch();
         
-        if (in_submenu) {
-            // Submenu input handling
-            if (ch == 27 || ch == 'q' || ch == 'Q') { // ESC or q to exit submenu
-                in_submenu = false;
-                current_mode = "";
-                response_text = "";
-            }
-        } else {
-            // Main menu input handling
-            switch (ch) {
-                case KEY_UP:
-                    current_selection = (current_selection - 1 + NUM_MENU_ITEMS) % NUM_MENU_ITEMS;
-                    break;
-                    
-                case KEY_DOWN:
-                    current_selection = (current_selection + 1) % NUM_MENU_ITEMS;
-                    break;
-                    
-                case 10: // Enter key
-                    if (current_selection == NUM_MENU_ITEMS - 1) { // Log Out option
-                        // Create a nice goodbye animation
-                        clear();
-                        box(stdscr, 0, 0);
+        // Process input based on current menu level
+        switch (current_level) {
+            case MAIN_MENU:
+                switch (ch) {
+                    case KEY_UP:
+                        main_selection = (main_selection - 1 + NUM_MAIN_MENU_ITEMS) % NUM_MAIN_MENU_ITEMS;
+                        break;
                         
-                        attron(A_BOLD);
-                        mvprintw(height/2 - 2, (width - 20) / 2, "Logging out...");
-                        attroff(A_BOLD);
+                    case KEY_DOWN:
+                        main_selection = (main_selection + 1) % NUM_MAIN_MENU_ITEMS;
+                        break;
                         
-                        // Countdown animation
-                        for (int i = 3; i > 0; i--) {
-                            mvprintw(height/2, (width - 10) / 2, "Goodbye in %d", i);
+                    case 10: // Enter key
+                        if (main_selection == NUM_MAIN_MENU_ITEMS - 1) { // Log Out option
+                            // Create a nice goodbye animation
+                            clear();
+                            box(stdscr, 0, 0);
+                            
+                            attron(A_BOLD);
+                            mvprintw(height/2 - 2, (width - 20) / 2, "Logging out...");
+                            attroff(A_BOLD);
+                            
+                            // Countdown animation
+                            for (int i = 3; i > 0; i--) {
+                                mvprintw(height/2, (width - 10) / 2, "Goodbye in %d", i);
+                                refresh();
+                                napms(400);
+                            }
+                            
+                            mvprintw(height/2, (width - 20) / 2, "Goodbye! Thank you!");
                             refresh();
-                            napms(400);
+                            napms(700);
+                            return;
+                        } else {
+                            // Process main menu selection
+                            submenu_selection = 0; // Reset submenu selection
+                            
+                            if (main_selection == 0) { // Browse Games
+                                current_level = BROWSE_MENU;
+                            }
+                            else if (main_selection == 1) { // Rent a Game
+                                current_level = RENT_MENU;
+                            }
+                            else if (main_selection == 2) { // My Games
+                                current_level = MYGAMES_MENU;
+                            }
+                            else if (main_selection == 3) { // Search Games
+                                // Show search dialog
+                                clear();
+                                box(stdscr, 0, 0);
+                                mvprintw(height/2 - 2, (width - 20) / 2, "Search for a game:");
+                                
+                                // Input box
+                                echo();
+                                curs_set(1);
+                                char search_buf[256] = {0};
+                                mvprintw(height/2, (width - 30) / 2, "");
+                                for (int i = 0; i < 30; i++) {
+                                    mvaddch(height/2, (width - 30) / 2 + i, '_');
+                                }
+                                mvprintw(height/2, (width - 30) / 2, "");
+                                getnstr(search_buf, 255);
+                                noecho();
+                                curs_set(0);
+                                
+                                search_query = search_buf;
+                                if (!search_query.empty()) {
+                                    // Execute search and parse results
+                                    std::string results = send_command_and_get_response("SEARCH " + search_query);
+                                    
+                                    // Parse results into game list
+                                    game_list.clear();
+                                    std::istringstream iss(results);
+                                    std::string result_line;
+                                    while (std::getline(iss, result_line)) {
+                                        if (!result_line.empty() && result_line[0] != '-') {
+                                            game_list.push_back(result_line);
+                                        }
+                                    }
+                                    
+                                    list_selection = 0;
+                                    current_level = SEARCH_RESULTS;
+                                }
+                            }
+                            else if (main_selection == 4) { // View History
+                                response_text = send_command_and_get_response("HISTORY");
+                                current_level = HISTORY_DISPLAY;
+                            }
+                            else if (main_selection == 5) { // Get Recommendations
+                                response_text = send_command_and_get_response("RECOMMEND");
+                                current_level = RECOMMEND_DISPLAY;
+                            }
                         }
+                        break;
                         
-                        mvprintw(height/2, (width - 20) / 2, "Goodbye! Thank you!");
+                    case 'q':
+                    case 'Q':
+                        // Quick exit
+                        clear();
+                        mvprintw(height/2, (width - 15) / 2, "Logging out...");
                         refresh();
-                        napms(700);
+                        napms(500);
                         return;
-                    } else {
-                        // Execute the command and show results
-                        current_mode = menu_items[current_selection];
-                        std::string command = menu_commands[current_selection];
-                        response_text = send_command_and_get_response(command);
-                        in_submenu = true;
-                    }
-                    break;
-                    
-                case 'q':
-                case 'Q':
-                    // Quick exit
-                    clear();
-                    mvprintw(height/2, (width - 15) / 2, "Logging out...");
-                    refresh();
-                    napms(500);
-                    return;
-            }
+                }
+                break;
+                
+            case BROWSE_MENU:
+                switch (ch) {
+                    case KEY_UP:
+                        submenu_selection = (submenu_selection - 1 + NUM_BROWSE_ITEMS) % NUM_BROWSE_ITEMS;
+                        break;
+                        
+                    case KEY_DOWN:
+                        submenu_selection = (submenu_selection + 1) % NUM_BROWSE_ITEMS;
+                        break;
+                        
+                    case 10: // Enter key
+                        if (submenu_selection == NUM_BROWSE_ITEMS - 1) {
+                            // Back to main menu
+                            current_level = MAIN_MENU;
+                        } else {
+                            // Process browse submenu selection
+                            switch (submenu_selection) {
+                                case 0: // List All Games
+                                    // Get game list and display as selectable list
+                                    std::string results = send_command_and_get_response("LIST");
+                                    
+                                    // Parse results into game list
+                                    game_list.clear();
+                                    std::istringstream iss(results);
+                                    std::string result_line;
+                                    while (std::getline(iss, result_line)) {
+                                        if (!result_line.empty() && result_line[0] != '-') {
+                                            game_list.push_back(result_line);
+                                        }
+                                    }
+                                    
+                                    if (!game_list.empty()) {
+                                        list_selection = 0;
+                                        current_level = SEARCH_RESULTS;
+                                        search_query = "All Games";
+                                    }
+                                    break;
+                            }
+                        }
+                        break;
+                        
+                    case 27: // ESC key
+                    case 'q':
+                    case 'Q':
+                        current_level = MAIN_MENU;
+                        break;
+                }
+                break;
+                
+            case RENT_MENU:
+                switch (ch) {
+                    case KEY_UP:
+                        submenu_selection = (submenu_selection - 1 + NUM_RENT_ITEMS) % NUM_RENT_ITEMS;
+                        break;
+                        
+                    case KEY_DOWN:
+                        submenu_selection = (submenu_selection + 1) % NUM_RENT_ITEMS;
+                        break;
+                        
+                    case 10: // Enter key
+                        if (submenu_selection == NUM_RENT_ITEMS - 1) {
+                            // Back to main menu
+                            current_level = MAIN_MENU;
+                        } else {
+                            // Process rent submenu selection
+                            switch (submenu_selection) {
+                                case 0: // Checkout Game
+                                    // Get list of available games first
+                                    std::string results = send_command_and_get_response("LIST");
+                                    
+                                    // Parse results into game list
+                                    game_list.clear();
+                                    std::istringstream iss(results);
+                                    std::string result_line;
+                                    while (std::getline(iss, result_line)) {
+                                        if (!result_line.empty() && result_line[0] != '-') {
+                                            game_list.push_back(result_line);
+                                        }
+                                    }
+                                    
+                                    if (!game_list.empty()) {
+                                        list_selection = 0;
+                                        current_level = SEARCH_RESULTS;
+                                        search_query = "Available Games";
+                                    }
+                                    break;
+                            }
+                        }
+                        break;
+                        
+                    case 27: // ESC key
+                    case 'q':
+                    case 'Q':
+                        current_level = MAIN_MENU;
+                        break;
+                }
+                break;
+                
+            case MYGAMES_MENU:
+                switch (ch) {
+                    case KEY_UP:
+                        submenu_selection = (submenu_selection - 1 + NUM_MYGAMES_ITEMS) % NUM_MYGAMES_ITEMS;
+                        break;
+                        
+                    case KEY_DOWN:
+                        submenu_selection = (submenu_selection + 1) % NUM_MYGAMES_ITEMS;
+                        break;
+                        
+                    case 10: // Enter key
+                        if (submenu_selection == NUM_MYGAMES_ITEMS - 1) {
+                            // Back to main menu
+                            current_level = MAIN_MENU;
+                        } else {
+                            // Process my games submenu selection
+                            switch (submenu_selection) {
+                                case 0: // Currently Rented Games
+                                    // Get list of rented games
+                                    response_text = send_command_and_get_response("MYGAMES");
+                                    current_level = HISTORY_DISPLAY; // Reuse history display for this
+                                    break;
+                                    
+                                case 1: // Rate a Game
+                                    // Get list of games to rate (previously rented)
+                                    response_text = send_command_and_get_response("HISTORY");
+                                    current_level = HISTORY_DISPLAY;
+                                    break;
+                                    
+                                case 2: // View Recommendations
+                                    response_text = send_command_and_get_response("RECOMMEND");
+                                    current_level = RECOMMEND_DISPLAY;
+                                    break;
+                            }
+                        }
+                        break;
+                        
+                    case 27: // ESC key
+                    case 'q':
+                    case 'Q':
+                        current_level = MAIN_MENU;
+                        break;
+                }
+                break;
+                
+            case GAME_DETAILS:
+                switch (ch) {
+                    case 'r':
+                    case 'R':
+                        // Rent the selected game
+                        if (!selected_game.empty()) {
+                            std::string rent_response = send_command_and_get_response("CHECKOUT " + selected_game);
+                            
+                            // Show rental status in a popup
+                            clear();
+                            box(stdscr, 0, 0);
+                            
+                            if (rent_response.find("success") != std::string::npos) {
+                                attron(A_BOLD);
+                                if (has_colors()) {
+                                    attron(COLOR_PAIR(2)); // Green for success
+                                }
+                                mvprintw(height/2 - 2, (width - 15) / 2, "RENTAL SUCCESS!");
+                                if (has_colors()) {
+                                    attroff(COLOR_PAIR(2));
+                                }
+                                attroff(A_BOLD);
+                                
+                                mvprintw(height/2, (width - 40) / 2, "You have successfully rented: %s", selected_game.c_str());
+                            } else {
+                                attron(A_BOLD);
+                                if (has_colors()) {
+                                    attron(COLOR_PAIR(3)); // Red for error
+                                }
+                                mvprintw(height/2 - 2, (width - 13) / 2, "RENTAL ERROR");
+                                if (has_colors()) {
+                                    attroff(COLOR_PAIR(3));
+                                }
+                                attroff(A_BOLD);
+                                
+                                mvprintw(height/2, (width - 40) / 2, "Could not rent: %s", rent_response.c_str());
+                            }
+                            
+                            mvprintw(height/2 + 2, (width - 26) / 2, "Press any key to continue...");
+                            refresh();
+                            getch();
+                            
+                            // Go back to browse menu
+                            current_level = BROWSE_MENU;
+                        }
+                        break;
+                        
+                    case 27: // ESC key
+                    case 'q':
+                    case 'Q':
+                        current_level = SEARCH_RESULTS; // Go back to search results
+                        break;
+                }
+                break;
+                
+            case SEARCH_RESULTS:
+                switch (ch) {
+                    case KEY_UP:
+                        if (!game_list.empty()) {
+                            list_selection = (list_selection - 1 + game_list.size()) % game_list.size();
+                        }
+                        break;
+                        
+                    case KEY_DOWN:
+                        if (!game_list.empty()) {
+                            list_selection = (list_selection + 1) % game_list.size();
+                        }
+                        break;
+                        
+                    case 10: // Enter key
+                        if (!game_list.empty()) {
+                            selected_game = game_list[list_selection];
+                            current_level = GAME_DETAILS;
+                        }
+                        break;
+                        
+                    case 27: // ESC key
+                    case 'q':
+                    case 'Q':
+                        // Go back to the appropriate menu
+                        if (search_query == "All Games" || search_query == "Available Games") {
+                            current_level = BROWSE_MENU;
+                        } else {
+                            current_level = MAIN_MENU;
+                        }
+                        break;
+                }
+                break;
+                
+            case HISTORY_DISPLAY:
+            case RECOMMEND_DISPLAY:
+                if (ch == 27 || ch == 'q' || ch == 'Q') { // ESC key or q
+                    current_level = MAIN_MENU;
+                }
+                break;
         }
     }
     
