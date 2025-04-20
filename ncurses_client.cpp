@@ -661,24 +661,40 @@ bool password_form(const std::string& username, bool is_new_user) {
                     
                     mvprintw(height/4 + 2, (width - 32) / 2, "Welcome to the Game Rental System!");
                     
+                    // First clear the screen completely to make sure messages are visible
+                    clear();
+                    refresh();
+                    
+                    // Draw a border
+                    box(stdscr, 0, 0);
+                    refresh();
+                    
+                    // Draw title at the top
+                    attron(A_BOLD);
+                    mvprintw(2, (width - 19) / 2, "GAME RENTAL SYSTEM");
+                    attroff(A_BOLD);
+                    
                     // Add more descriptive loading message
                     attron(A_BOLD);
-                    mvprintw(height/2 - 2, (width - 21) / 2, "LOGGING IN USER: %s", username.c_str());
+                    mvprintw(height/3, (width - 21) / 2, "LOGGING IN USER: %s", username.c_str());
                     attroff(A_BOLD);
                     
                     // Create loading animation
                     if (has_colors()) {
                         attron(COLOR_PAIR(2)); // Green text for success message
                     }
-                    attron(A_BOLD);
-                    mvprintw(height/2, (width - 34) / 2, "SUCCESS! LOGGING IN TO SYSTEM...");
-                    attroff(A_BOLD);
+                    attron(A_BOLD | A_BLINK); // Add blinking effect
+                    mvprintw(height/3 + 2, (width - 34) / 2, "SUCCESS! LOGGING IN TO SYSTEM...");
+                    attroff(A_BOLD | A_BLINK);
                     if (has_colors()) {
                         attroff(COLOR_PAIR(2));
                     }
                     
-                    // Progress bar box
-                    WINDOW* progress_win = newwin(3, 52, height/2 + 2, (width - 52) / 2);
+                    // Force refresh to make sure messages are displayed
+                    refresh();
+                    
+                    // Progress bar box - positioned lower to avoid overlap
+                    WINDOW* progress_win = newwin(3, 52, height/3 + 5, (width - 52) / 2);
                     box(progress_win, 0, 0);
                     wrefresh(progress_win);
                     
@@ -763,24 +779,40 @@ bool password_form(const std::string& username, bool is_new_user) {
                     
                     mvprintw(height/4 + 2, (width - 37) / 2, "Welcome back to the Game Rental System!");
                     
+                    // First clear the screen completely to make sure messages are visible
+                    clear();
+                    refresh();
+                    
+                    // Draw a border
+                    box(stdscr, 0, 0);
+                    refresh();
+                    
+                    // Draw title at the top
+                    attron(A_BOLD);
+                    mvprintw(2, (width - 19) / 2, "GAME RENTAL SYSTEM");
+                    attroff(A_BOLD);
+                    
                     // Add more descriptive loading message
                     attron(A_BOLD);
-                    mvprintw(height/2 - 2, (width - 21) / 2, "LOGGING IN USER: %s", username.c_str());
+                    mvprintw(height/3, (width - 21) / 2, "LOGGING IN USER: %s", username.c_str());
                     attroff(A_BOLD);
                     
                     // Create loading animation
                     if (has_colors()) {
                         attron(COLOR_PAIR(2)); // Green text for success message
                     }
-                    attron(A_BOLD);
-                    mvprintw(height/2, (width - 34) / 2, "SUCCESS! LOGGING IN TO SYSTEM...");
-                    attroff(A_BOLD);
+                    attron(A_BOLD | A_BLINK); // Add blinking effect
+                    mvprintw(height/3 + 2, (width - 34) / 2, "SUCCESS! LOGGING IN TO SYSTEM...");
+                    attroff(A_BOLD | A_BLINK);
                     if (has_colors()) {
                         attroff(COLOR_PAIR(2));
                     }
                     
-                    // Progress bar box
-                    WINDOW* progress_win = newwin(3, 52, height/2 + 2, (width - 52) / 2);
+                    // Force refresh to make sure messages are displayed
+                    refresh();
+                    
+                    // Progress bar box - positioned lower to avoid overlap
+                    WINDOW* progress_win = newwin(3, 52, height/3 + 5, (width - 52) / 2);
                     box(progress_win, 0, 0);
                     wrefresh(progress_win);
                     
