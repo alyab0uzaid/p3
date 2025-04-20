@@ -661,6 +661,11 @@ bool password_form(const std::string& username, bool is_new_user) {
                     
                     mvprintw(height/4 + 2, (width - 32) / 2, "Welcome to the Game Rental System!");
                     
+                    // Add more descriptive loading message
+                    attron(A_BOLD);
+                    mvprintw(height/2 - 2, (width - 21) / 2, "LOGGING IN USER: %s", username.c_str());
+                    attroff(A_BOLD);
+                    
                     // Create loading animation
                     mvprintw(height/2, (width - 19) / 2, "Loading main menu...");
                     
@@ -743,6 +748,11 @@ bool password_form(const std::string& username, bool is_new_user) {
                     attroff(A_BOLD);
                     
                     mvprintw(height/4 + 2, (width - 37) / 2, "Welcome back to the Game Rental System!");
+                    
+                    // Add more descriptive loading message
+                    attron(A_BOLD);
+                    mvprintw(height/2 - 2, (width - 21) / 2, "LOGGING IN USER: %s", username.c_str());
+                    attroff(A_BOLD);
                     
                     // Create loading animation
                     mvprintw(height/2, (width - 19) / 2, "Loading main menu...");
@@ -906,8 +916,19 @@ void command_interface() {
         // Draw Command prompt
         wmove(cmd_win, 1, 2);
         wclrtoeol(cmd_win); // Clear previous command
+        
+        // Use green for the # prompt
         wattron(cmd_win, A_BOLD);
-        mvwprintw(cmd_win, 1, 2, "Command: ");
+        if (has_colors()) {
+            wattron(cmd_win, COLOR_PAIR(2)); // Green for hash
+        }
+        mvwprintw(cmd_win, 1, 2, "#");
+        if (has_colors()) {
+            wattroff(cmd_win, COLOR_PAIR(2));
+        }
+        
+        // Space after the hash
+        mvwprintw(cmd_win, 1, 3, " ");
         wattroff(cmd_win, A_BOLD);
         wrefresh(cmd_win);
         
@@ -917,7 +938,7 @@ void command_interface() {
         // Get user input
         char cmd_buf[256] = {0};
         echo(); // Show typing
-        mvwgetnstr(cmd_win, 1, 11, cmd_buf, 255);
+        mvwgetnstr(cmd_win, 1, 4, cmd_buf, 255);
         noecho(); // Hide typing for next iteration
         
         std::string command(cmd_buf);
@@ -952,10 +973,22 @@ void command_interface() {
         
         // Show command in output with some styling
         wattron(output_pad, A_BOLD);
+        
+        // Use green specifically for the # character
         if (has_colors()) {
-            wattron(output_pad, COLOR_PAIR(4)); // Yellow for commands
+            wattron(output_pad, COLOR_PAIR(2)); // Green for prompt character
         }
-        mvwprintw(output_pad, pad_pos++, 0, "> %s", command.c_str());
+        mvwprintw(output_pad, pad_pos, 0, "#");
+        if (has_colors()) {
+            wattroff(output_pad, COLOR_PAIR(2));
+            
+            // Use yellow for the command text
+            wattron(output_pad, COLOR_PAIR(4)); 
+        }
+        
+        // Print the actual command after the prompt
+        mvwprintw(output_pad, pad_pos++, 2, "%s", command.c_str());
+        
         if (has_colors()) {
             wattroff(output_pad, COLOR_PAIR(4));
         }
