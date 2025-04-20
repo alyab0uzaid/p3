@@ -350,35 +350,20 @@ void cleanup_ncurses() {
 }
 
 // Handle login with the server
-void handle_login(SSL* ssl, const std::string& username, const std::string& password) {
-    if (!ssl) return;
+bool handle_login(SSL* ssl, const std::string& username, const std::string& password, std::string& server_msg) {
+    if (!ssl) return false;
     
     std::array<char, MAXDATASIZE> buffer;
     
     // Send USER command
     std::string user_cmd = "USER " + username + "\r\n";
     if (SSL_write(ssl, user_cmd.c_str(), user_cmd.length()) <= 0) {
-        // Handle error
-        return;
+        server_msg = "Error sending USER command to server";
+        return false;
     }
     
     // Read USER response
-    int bytes = SSL_read(ssl, buffer.data(), buffer.size() - 1);
-    if (bytes <= 0) {
-        // Handle error
-        return;
-    }
-    buffer[bytes] = '\0';
-    server_response = buffer.data();
-    
-    // Send PASS command
-    std::string pass_cmd = "PASS " + password + "\r\n";
-    if (SSL_write(ssl, pass_cmd.c_str(), pass_cmd.length()) <= 0) {
-        // Handle error
-        return;
-    }
-    
-    // Read PASS response with retries
+    int bytes = 0;
     for (int attempts = 0; attempts < 5; attempts++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         bytes = SSL_read(ssl, buffer.data(), buffer.size() - 1);
@@ -386,11 +371,77 @@ void handle_login(SSL* ssl, const std::string& username, const std::string& pass
     }
     
     if (bytes <= 0) {
-        // Handle error
-        return;
+        server_msg = "No response received from server for USER command";
+        return false;
     }
+    
     buffer[bytes] = '\0';
-    server_response = buffer.data();
+    std::string user_response = buffer.data();
+    server_msg = user_response;
+    
+    // Check if this is a new user (331 response contains generated password)
+    if (user_response.find("331") != std::string::npos && 
+        user_response.find("Password:") != std::string::npos) {
+        // New user was created, no need to send PASS
+        return true;
+    }
+    
+    // For existing users, send PASS command
+    std::string pass_cmd = "PASS " + password + "\r\n";
+    if (SSL_write(ssl, pass_cmd.c_str(), pass_cmd.length()) <= 0) {
+        server_msg = "Error sending PASS command to server";
+        return false;
+    }
+    
+    // Read PASS response with retries
+    bytes = 0;
+    for (int attempts = 0; attempts < 5; attempts++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        bytes = SSL_read(ssl, buffer.data(), buffer.size() - 1);
+        if (bytes > 0) break;
+    }
+    
+    if (bytes <= 0) {
+        server_msg = "No response received from server for PASS command";
+        return false;
+    }
+    
+    buffer[bytes] = '\0';
+    server_msg = buffer.data();
+    
+    // Success if response contains code 230
+    return server_msg.find("230") != std::string::npos;
+}
+
+// Draw registration success screen
+void draw_registration_screen(const std::string& username, const std::string& generated_password) {
+    clear();
+    
+    // Draw title bar
+    attron(COLOR_PAIR(1));
+    mvprintw(0, 0, "NEW USER REGISTRATION");
+    for (int i = 20; i < COLS; i++) {
+        mvprintw(0, i, " ");
+    }
+    attroff(COLOR_PAIR(1));
+    
+    // Show registration info
+    mvprintw(3, 2, "A new account has been created for you!");
+    attron(COLOR_PAIR(3));
+    mvprintw(5, 2, "Username: %s", username.c_str());
+    mvprintw(6, 2, "Generated Password: %s", generated_password.c_str());
+    attroff(COLOR_PAIR(3));
+    
+    // Important notice
+    attron(A_BOLD);
+    mvprintw(8, 2, "IMPORTANT: Please save this password!");
+    attroff(A_BOLD);
+    mvprintw(9, 2, "You will need it for future logins.");
+    
+    // Draw instructions
+    mvprintw(LINES - 2, 2, "Press ENTER to continue to login");
+    
+    refresh();
 }
 
 // Send a command to the server and get response
@@ -607,95 +658,141 @@ int main(int argc, char* argv[]) {
         // Handle the current TUI state
         switch (current_state) {
             case TUIState::LOGIN:
-                draw_login_screen();
-                
-                // Position cursor based on current field
-                if (current_field == 0) {
-                    mvprintw(3, 12, "%s", input_username.c_str());
-                    move(3, 12 + input_username.length());
-                    curs_set(1);  // Show cursor
-                } else {
-                    mvprintw(5, 12, "%s", std::string(input_password.length(), '*').c_str());
-                    move(5, 12 + input_password.length());
-                    curs_set(1);  // Show cursor
-                }
-                
-                // Get input
-                ch = getch();
-                switch (ch) {
-                    case '\t':
-                        // Switch between username and password fields
-                        current_field = (current_field + 1) % 2;
-                        break;
-                    case '\n':
-                        // Attempt login
-                        if (!input_username.empty() && !input_password.empty()) {
-                            if (!skip_connection && ssl) {
-                                // Show "Logging in..." message
-                                attron(COLOR_PAIR(3));
-                                mvprintw(7, 2, "Logging in, please wait...");
-                                attroff(COLOR_PAIR(3));
-                                refresh();
-                                
-                                // Perform actual login
-                                handle_login(ssl, input_username, input_password);
-                                
-                                // Check login response for success
-                                if (server_response.find("230") != std::string::npos) {
-                                    // Login successful
+                {
+                    static bool registration_mode = false;
+                    static std::string generated_password;
+                    
+                    draw_login_screen();
+                    
+                    // If in registration mode, show that we're using generated password
+                    if (registration_mode) {
+                        attron(COLOR_PAIR(3));
+                        mvprintw(7, 2, "Using server-generated password");
+                        attroff(COLOR_PAIR(3));
+                    }
+                    
+                    // Position cursor based on current field
+                    if (current_field == 0) {
+                        mvprintw(3, 12, "%s", input_username.c_str());
+                        move(3, 12 + input_username.length());
+                        curs_set(1);  // Show cursor
+                    } else {
+                        if (registration_mode) {
+                            // Show the generated password in the password field
+                            mvprintw(5, 12, "%s", generated_password.c_str());
+                        } else {
+                            // Show asterisks for normal password input
+                            mvprintw(5, 12, "%s", std::string(input_password.length(), '*').c_str());
+                        }
+                        
+                        if (!registration_mode) {
+                            move(5, 12 + input_password.length());
+                            curs_set(1);  // Show cursor
+                        }
+                    }
+                    
+                    // Get input
+                    ch = getch();
+                    switch (ch) {
+                        case '\t':
+                            // Switch between username and password fields
+                            if (!registration_mode) {
+                                current_field = (current_field + 1) % 2;
+                            }
+                            break;
+                        case '\n':
+                            // Attempt login
+                            if (registration_mode) {
+                                // We're in registration mode, so use the generated password
+                                input_password = generated_password;
+                                registration_mode = false;
+                            }
+                            
+                            if (!input_username.empty() && !input_password.empty()) {
+                                if (!skip_connection && ssl) {
+                                    // Show "Logging in..." message
+                                    attron(COLOR_PAIR(3));
+                                    mvprintw(7, 2, "Logging in, please wait...");
+                                    attroff(COLOR_PAIR(3));
+                                    refresh();
+                                    
+                                    // Perform actual login
+                                    std::string server_msg;
+                                    bool login_success = handle_login(ssl, input_username, input_password, server_msg);
+                                    
+                                    // Check login response
+                                    if (login_success) {
+                                        // Check if this was a new user registration
+                                        if (server_msg.find("331") != std::string::npos && 
+                                            server_msg.find("Password:") != std::string::npos) {
+                                            // Extract the generated password
+                                            size_t pwd_start = server_msg.find("Password:") + 10;
+                                            size_t pwd_end = server_msg.find("\r", pwd_start);
+                                            if (pwd_end == std::string::npos) {
+                                                pwd_end = server_msg.length();
+                                            }
+                                            
+                                            generated_password = server_msg.substr(pwd_start, pwd_end - pwd_start);
+                                            
+                                            // Show registration screen
+                                            draw_registration_screen(input_username, generated_password);
+                                            registration_mode = true;
+                                            
+                                            // Wait for user to press Enter
+                                            while (getch() != '\n') {}
+                                            
+                                            // Set to password field for next screen
+                                            input_password.clear();
+                                            current_field = 1;
+                                        } else {
+                                            // Normal login success
+                                            username = input_username;
+                                            current_state = TUIState::MAIN_MENU;
+                                            highlighted_item = 0;
+                                        }
+                                    } else if (server_msg.find("530") != std::string::npos) {
+                                        // Login failed
+                                        attron(COLOR_PAIR(4));
+                                        mvprintw(7, 2, "Login failed: Invalid username or password");
+                                        attroff(COLOR_PAIR(4));
+                                        refresh();
+                                        std::this_thread::sleep_for(std::chrono::seconds(2));
+                                    } else {
+                                        // Other error
+                                        attron(COLOR_PAIR(4));
+                                        mvprintw(7, 2, "Error: %s", server_msg.c_str());
+                                        attroff(COLOR_PAIR(4));
+                                        refresh();
+                                        std::this_thread::sleep_for(std::chrono::seconds(2));
+                                    }
+                                } else {
+                                    // UI-only mode, just proceed to main menu
                                     username = input_username;
                                     current_state = TUIState::MAIN_MENU;
                                     highlighted_item = 0;
-                                } else if (server_response.find("530") != std::string::npos) {
-                                    // Login failed
-                                    attron(COLOR_PAIR(4));
-                                    mvprintw(7, 2, "Login failed: Invalid username or password");
-                                    attroff(COLOR_PAIR(4));
-                                    refresh();
-                                    std::this_thread::sleep_for(std::chrono::seconds(2));
-                                } else if (server_response.find("331") != std::string::npos) {
-                                    // New user registration
-                                    attron(COLOR_PAIR(3));
-                                    mvprintw(7, 2, "New user registered. The server has generated a password for you.");
-                                    mvprintw(8, 2, "Password: %s", server_response.substr(server_response.find("Password:") + 10).c_str());
-                                    attroff(COLOR_PAIR(3));
-                                    refresh();
-                                    std::this_thread::sleep_for(std::chrono::seconds(5));
-                                } else {
-                                    // Other error
-                                    attron(COLOR_PAIR(4));
-                                    mvprintw(7, 2, "Error: %s", server_response.c_str());
-                                    attroff(COLOR_PAIR(4));
-                                    refresh();
-                                    std::this_thread::sleep_for(std::chrono::seconds(2));
                                 }
-                            } else {
-                                // UI-only mode, just proceed to main menu
-                                username = input_username;
-                                current_state = TUIState::MAIN_MENU;
-                                highlighted_item = 0;
                             }
-                        }
-                        break;
-                    case KEY_BACKSPACE:
-                    case 127:
-                        // Handle backspace
-                        if (current_field == 0 && !input_username.empty()) {
-                            input_username.pop_back();
-                        } else if (current_field == 1 && !input_password.empty()) {
-                            input_password.pop_back();
-                        }
-                        break;
-                    default:
-                        // Add character to current field
-                        if (ch >= 32 && ch <= 126) {  // Printable ASCII
-                            if (current_field == 0) {
-                                input_username += ch;
-                            } else {
-                                input_password += ch;
+                            break;
+                        case KEY_BACKSPACE:
+                        case 127:
+                            // Handle backspace
+                            if (current_field == 0 && !input_username.empty() && !registration_mode) {
+                                input_username.pop_back();
+                            } else if (current_field == 1 && !input_password.empty() && !registration_mode) {
+                                input_password.pop_back();
                             }
-                        }
-                        break;
+                            break;
+                        default:
+                            // Add character to current field
+                            if (ch >= 32 && ch <= 126 && !registration_mode) {  // Printable ASCII
+                                if (current_field == 0) {
+                                    input_username += ch;
+                                } else {
+                                    input_password += ch;
+                                }
+                            }
+                            break;
+                    }
                 }
                 break;
                 
