@@ -189,14 +189,36 @@ std::string send_command_and_get_response(const std::string& command) {
     return std::string(buffer);
 }
 
+// Helper function to set grey border color
+void set_border_color(WINDOW* win) {
+    if (has_colors()) {
+        wattron(win, COLOR_PAIR(5)); // Grey border color
+    }
+}
+
+// Helper function to unset grey border color
+void unset_border_color(WINDOW* win) {
+    if (has_colors()) {
+        wattroff(win, COLOR_PAIR(5)); // Grey border color
+    }
+}
+
+// Helper function to set transparent background for a window
+void set_transparent_background(WINDOW* win) {
+    if (has_colors()) {
+        wbkgd(win, COLOR_PAIR(0)); // Use default terminal colors for background
+    }
+}
+
 // Display a message box with the given message
 void display_message_box(const std::string& message) {
-    clear();
     int height, width;
     getmaxyx(stdscr, height, width);
     
-    WINDOW* win = newwin(10, width - 20, height/2 - 5, 10);
+    WINDOW* win = newwin(6, width - 20, height/2 - 3, 10);
+    set_border_color(win);
     box(win, 0, 0);
+    unset_border_color(win);
     
     // Add a title border
     wattron(win, A_BOLD);
@@ -242,9 +264,10 @@ bool username_form() {
     int height, width;
     getmaxyx(stdscr, height, width);
     
-    // Create a main border
+    // Create a border around the entire screen
+    set_border_color(stdscr);
     box(stdscr, 0, 0);
-    refresh();
+    unset_border_color(stdscr);
     
     // Calculate centered positions - make the form wider
     int form_width = 70;  // Increased from 50 to 70
@@ -254,7 +277,9 @@ bool username_form() {
     
     // Create centered form window with border
     WINDOW* form_win = newwin(form_height, form_width, start_y, start_x);
+    set_border_color(form_win);
     box(form_win, 0, 0);
+    unset_border_color(form_win);
     
     // Print title using bold centered text
     wattron(form_win, A_BOLD);
@@ -269,12 +294,17 @@ bool username_form() {
     // Basic instructions centered
     mvwprintw(form_win, 4, (form_width - 47) / 2, "Enter your username to login or create a new account");
     
-    // Username field with box
-    mvwprintw(form_win, 6, 5, "Username:");
-    
-    // Draw input box instead of underline - make it wider
-    WINDOW* input_win = derwin(form_win, 3, 40, 5, 15);
+    // Remove Username label and use placeholder inside the input window
+    // Create the input window with border
+    WINDOW* input_win = newwin(3, 40, (height - form_height) / 2 + 5, (width - 40) / 2);
+    set_border_color(input_win);
     box(input_win, 0, 0);
+    unset_border_color(input_win);
+    
+    // Add placeholder text inside the input box
+    wattron(input_win, A_DIM); // Dim attribute for placeholder text
+    mvwprintw(input_win, 1, 1, "Enter username...");
+    wattroff(input_win, A_DIM);
     
     // Instructions at the bottom
     mvwprintw(form_win, form_height - 2, (form_width - 36) / 2, "Press ENTER to continue or ESC to exit");
@@ -288,12 +318,13 @@ bool username_form() {
     int pos = 0;
     int ch;
     bool result = false;
+    bool first_keypress = true; // Track if this is the first keypress
     
     // Position cursor at start of input field inside the input box (accounting for border)
     wmove(input_win, 1, 1);
     curs_set(1); // Make cursor visible
     keypad(input_win, TRUE); // Enable special keys
-    echo(); // Show typing
+    noecho(); // Don't echo characters (we'll handle display manually)
     wrefresh(input_win);
     
     // Input loop
@@ -328,8 +359,18 @@ bool username_form() {
                 }
                 wrefresh(form_win);
                 
+                // Show placeholder again
+                werase(input_win);
+                set_border_color(input_win);
+                box(input_win, 0, 0);
+                unset_border_color(input_win);
+                wattron(input_win, A_DIM);
+                mvwprintw(input_win, 1, 1, "Enter username...");
+                wattroff(input_win, A_DIM);
+                first_keypress = true;
+                
                 // Move cursor back to input position
-                wmove(input_win, 1, 1 + pos);
+                wmove(input_win, 1, 1);
                 wrefresh(input_win);
                 continue;
             }
@@ -383,15 +424,38 @@ bool username_form() {
         else if (ch == KEY_BACKSPACE || ch == 127) { // Backspace
             if (pos > 0) {
                 pos--;
-                // Move cursor back and replace with space
+                // Replace with space
                 wmove(input_win, 1, 1 + pos);
                 waddch(input_win, ' ');
-                // Position cursor at the correct spot
+                // Position cursor correctly
                 wmove(input_win, 1, 1 + pos);
                 wrefresh(input_win);
+                
+                // If we deleted all characters, show the placeholder again
+                if (pos == 0) {
+                    werase(input_win);
+                    set_border_color(input_win);
+                    box(input_win, 0, 0);
+                    unset_border_color(input_win);
+                    wattron(input_win, A_DIM);
+                    mvwprintw(input_win, 1, 1, "Enter username...");
+                    wattroff(input_win, A_DIM);
+                    first_keypress = true;
+                    wrefresh(input_win);
+                }
             }
         }
         else if (pos < 38 && ch >= 32 && ch <= 126) { // Printable characters - increased limit for wider boxes
+            // Clear the placeholder text on first keypress
+            if (first_keypress) {
+                werase(input_win);
+                set_border_color(input_win);
+                box(input_win, 0, 0);
+                unset_border_color(input_win);
+                first_keypress = false;
+                wrefresh(input_win);
+            }
+            
             // Store character and display it
             username[pos] = ch;
             wmove(input_win, 1, 1 + pos);
@@ -416,8 +480,9 @@ bool password_form(const std::string& username, bool is_new_user) {
     getmaxyx(stdscr, height, width);
     
     // Create a main border
+    set_border_color(stdscr);
     box(stdscr, 0, 0);
-    refresh();
+    unset_border_color(stdscr);
     
     // Calculate centered positions - make the form wider and taller
     int form_width = 70;  // Increased width
@@ -427,7 +492,9 @@ bool password_form(const std::string& username, bool is_new_user) {
     
     // Create centered form window with border
     WINDOW* form_win = newwin(form_height, form_width, start_y, start_x);
+    set_border_color(form_win);
     box(form_win, 0, 0);
+    unset_border_color(form_win);
     
     // Print title using bold centered text
     wattron(form_win, A_BOLD);
@@ -453,21 +520,30 @@ bool password_form(const std::string& username, bool is_new_user) {
         mvwprintw(form_win, 5, (form_width - 33) / 2, "Please enter your password to log in");
     }
     
-    // Password field with box
-    mvwprintw(form_win, 8, 5, "Password:");
-    
-    // Draw input box instead of underline - make it wider
-    WINDOW* pass_win = derwin(form_win, 3, 40, 7, 15);
+    // Remove password label and just create the input window
+    // Create password input window with border
+    WINDOW* pass_win = newwin(3, 40, (height - form_height) / 2 + 8, (width - 40) / 2);
+    set_border_color(pass_win);
     box(pass_win, 0, 0);
+    unset_border_color(pass_win);
     
-    // Confirm password field for new users
-    WINDOW* confirm_win = NULL;
+    // Add placeholder text inside the password box
+    wattron(pass_win, A_DIM); // Dim attribute for placeholder text
+    mvwprintw(pass_win, 1, 1, "Enter password...");
+    wattroff(pass_win, A_DIM);
+    
+    // If it's a new user, create a confirmation window too
+    WINDOW* confirm_win = nullptr;
     if (is_new_user) {
-        mvwprintw(form_win, 11, 5, "Confirm:");
-        
-        // Draw input box for confirm password - make it wider
-        confirm_win = derwin(form_win, 3, 40, 10, 15);
+        confirm_win = newwin(3, 40, (height - form_height) / 2 + 12, (width - 40) / 2);
+        set_border_color(confirm_win);
         box(confirm_win, 0, 0);
+        unset_border_color(confirm_win);
+        
+        // Add placeholder text inside the confirmation box
+        wattron(confirm_win, A_DIM);
+        mvwprintw(confirm_win, 1, 1, "Confirm password...");
+        wattroff(confirm_win, A_DIM);
     }
     
     // Instructions at the bottom - centered
@@ -498,6 +574,8 @@ bool password_form(const std::string& username, bool is_new_user) {
     wrefresh(pass_win);
     
     // Input loop for password
+    bool first_keypress = true; // Flag to track if this is the first keypress
+    
     while (true) {
         ch = wgetch(pass_win);
         
@@ -523,6 +601,16 @@ bool password_form(const std::string& username, bool is_new_user) {
                 }
                 wrefresh(form_win);
                 
+                // Show placeholder again
+                werase(pass_win);
+                set_border_color(pass_win);
+                box(pass_win, 0, 0);
+                unset_border_color(pass_win);
+                wattron(pass_win, A_DIM);
+                mvwprintw(pass_win, 1, 1, "Enter password...");
+                wattroff(pass_win, A_DIM);
+                first_keypress = true;
+                
                 // Move cursor back to password field
                 wmove(pass_win, 1, 1);
                 wrefresh(pass_win);
@@ -532,6 +620,7 @@ bool password_form(const std::string& username, bool is_new_user) {
             if (is_new_user) {
                 // Now get confirmation password
                 pos = 0;
+                bool confirm_first_keypress = true;
                 
                 // Clear any previous error message
                 mvwprintw(form_win, 13, 2, "                                                      ");
@@ -564,9 +653,32 @@ bool password_form(const std::string& username, bool is_new_user) {
                             // Position cursor correctly
                             wmove(confirm_win, 1, 1 + pos);
                             wrefresh(confirm_win);
+                            
+                            // If we deleted all characters, show the placeholder again
+                            if (pos == 0) {
+                                werase(confirm_win);
+                                set_border_color(confirm_win);
+                                box(confirm_win, 0, 0);
+                                unset_border_color(confirm_win);
+                                wattron(confirm_win, A_DIM);
+                                mvwprintw(confirm_win, 1, 1, "Confirm password...");
+                                wattroff(confirm_win, A_DIM);
+                                confirm_first_keypress = true;
+                                wrefresh(confirm_win);
+                            }
                         }
                     }
                     else if (pos < 38 && ch >= 32 && ch <= 126) { // Printable characters - increased limit for wider boxes
+                        // Clear the placeholder text on first keypress
+                        if (confirm_first_keypress) {
+                            werase(confirm_win);
+                            set_border_color(confirm_win);
+                            box(confirm_win, 0, 0);
+                            unset_border_color(confirm_win);
+                            confirm_first_keypress = false;
+                            wrefresh(confirm_win);
+                        }
+                        
                         confirm[pos] = ch;
                         // Show asterisk instead of character
                         wmove(confirm_win, 1, 1 + pos);
@@ -589,16 +701,27 @@ bool password_form(const std::string& username, bool is_new_user) {
                     }
                     wrefresh(form_win);
                     
-                    // Clear password fields
+                    // Clear password fields and reset placeholders
                     werase(pass_win);
+                    set_border_color(pass_win);
                     box(pass_win, 0, 0);
+                    unset_border_color(pass_win);
+                    wattron(pass_win, A_DIM);
+                    mvwprintw(pass_win, 1, 1, "Enter password...");
+                    wattroff(pass_win, A_DIM);
+                    first_keypress = true;
                     wrefresh(pass_win);
                     
                     werase(confirm_win);
+                    set_border_color(confirm_win);
                     box(confirm_win, 0, 0);
+                    unset_border_color(confirm_win);
+                    wattron(confirm_win, A_DIM);
+                    mvwprintw(confirm_win, 1, 1, "Confirm password...");
+                    wattroff(confirm_win, A_DIM);
                     wrefresh(confirm_win);
                     
-                    // Reset position and move to first password field
+                    // Reset position and start over with password
                     pos = 0;
                     wmove(pass_win, 1, 1);
                     wrefresh(pass_win);
@@ -613,7 +736,10 @@ bool password_form(const std::string& username, bool is_new_user) {
                 
                 // Create new message box
                 WINDOW* msg_win = newwin(7, 40, (height - 7) / 2, (width - 40) / 2);
+                set_border_color(msg_win);
                 box(msg_win, 0, 0);
+                unset_border_color(msg_win);
+                
                 wattron(msg_win, A_BOLD);
                 mvwprintw(msg_win, 0, (40 - 14) / 2, " Processing ");
                 wattroff(msg_win, A_BOLD);
@@ -695,8 +821,9 @@ bool password_form(const std::string& username, bool is_new_user) {
                     
                     // Progress bar box - positioned lower to avoid overlap
                     WINDOW* progress_win = newwin(3, 52, height/3 + 5, (width - 52) / 2);
+                    set_border_color(progress_win);
                     box(progress_win, 0, 0);
-                    wrefresh(progress_win);
+                    unset_border_color(progress_win);
                     
                     // Animate the loading bar with green hashes
                     if (has_colors()) {
@@ -813,8 +940,9 @@ bool password_form(const std::string& username, bool is_new_user) {
                     
                     // Progress bar box - positioned lower to avoid overlap
                     WINDOW* progress_win = newwin(3, 52, height/3 + 5, (width - 52) / 2);
+                    set_border_color(progress_win);
                     box(progress_win, 0, 0);
-                    wrefresh(progress_win);
+                    unset_border_color(progress_win);
                     
                     // Animate the loading bar with green hashes
                     if (has_colors()) {
@@ -877,9 +1005,32 @@ bool password_form(const std::string& username, bool is_new_user) {
                 // Position cursor correctly
                 wmove(pass_win, 1, 1 + pos);
                 wrefresh(pass_win);
+                
+                // If we deleted all characters, show the placeholder again
+                if (pos == 0) {
+                    werase(pass_win);
+                    set_border_color(pass_win);
+                    box(pass_win, 0, 0);
+                    unset_border_color(pass_win);
+                    wattron(pass_win, A_DIM);
+                    mvwprintw(pass_win, 1, 1, "Enter password...");
+                    wattroff(pass_win, A_DIM);
+                    first_keypress = true;
+                    wrefresh(pass_win);
+                }
             }
         }
         else if (pos < 38 && ch >= 32 && ch <= 126) { // Printable characters - increased limit for wider boxes
+            // Clear the placeholder text on first keypress
+            if (first_keypress) {
+                werase(pass_win);
+                set_border_color(pass_win);
+                box(pass_win, 0, 0);
+                unset_border_color(pass_win);
+                first_keypress = false;
+                wrefresh(pass_win);
+            }
+            
             password[pos] = ch;
             // Show asterisk instead of character
             wmove(pass_win, 1, 1 + pos);
@@ -983,8 +1134,10 @@ void command_interface() {
             attroff(COLOR_PAIR(1));
         }
         
-        // Create content area
+        // Create content area with grey border
+        set_border_color(stdscr);
         box(stdscr, 0, 0);
+        unset_border_color(stdscr);
         
         // User info
         attron(A_BOLD);
@@ -2770,10 +2923,16 @@ int main(int argc, char* argv[]) {
     // Enable color if terminal supports it
     if (has_colors()) {
         start_color();
+        use_default_colors();  // This enables transparent background (-1)
         init_pair(1, COLOR_WHITE, COLOR_BLUE);     // For titles
-        init_pair(2, COLOR_GREEN, COLOR_BLACK);    // For success messages
-        init_pair(3, COLOR_RED, COLOR_BLACK);      // For error messages
-        init_pair(4, COLOR_YELLOW, COLOR_BLACK);   // For warnings/highlights
+        init_pair(2, COLOR_GREEN, -1);             // For success messages with transparent background
+        init_pair(3, COLOR_RED, -1);               // For error messages with transparent background
+        init_pair(4, COLOR_YELLOW, -1);            // For warnings/highlights with transparent background
+        init_pair(5, 8, -1);                       // Grey for borders with transparent background
+        
+        // Set transparent background for the main screen
+        // This allows the terminal's background to show through
+        set_transparent_background(stdscr);
     }
     
     // Connect to the server
