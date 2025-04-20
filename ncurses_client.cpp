@@ -1,65 +1,88 @@
 /*
- * P3 NCURSES SECURE CLIENT
- * ------------------------
- * Description: Secure client with ncurses-based TUI for the video games rental system
+ * P3 NCURSES CLIENT
+ * ---------------
+ * Description: An ncurses-based client for the secure video game rental server
  */
 
-#include <iostream>
-#include <fstream>
+#include <ncurses.h>
+#include <form.h>
+#include <menu.h>
 #include <string>
 #include <cstring>
-#include <sstream>
+#include <vector>
+#include <iostream>
+#include <fstream>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <optional>
-#include <filesystem>
-#include <format>
-#include <array>
-#include <vector>
-#include <thread>
-#include <chrono>
-#include <algorithm>  // For std::transform
-#include <ncurses.h>
+#include <sstream>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-constexpr size_t MAXDATASIZE = 100000;
+#define MAXDATASIZE 100000
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
+#define CTRLD 4
 
-// TUI state enum
-enum class TUIState {
-    LOGIN,
-    MAIN_MENU,
-    BOOK_LIST,
-    SEARCH_BOOKS,
-    CHECKOUT_FORM,
-    RETURN_FORM,
-    HISTORY_VIEW
-};
+// Global variables
+int sockfd = -1;
+SSL* ssl = nullptr;
+SSL_CTX* ctx = nullptr;
+bool is_connected = false;
+bool is_authenticated = false;
+std::string current_user;
 
-// Global state variables
-TUIState current_state = TUIState::LOGIN;
-std::string username;
-std::string server_response;
-std::vector<std::string> books;
-int highlighted_item = 0;
-int scroll_offset = 0;
+// Forward declarations
+bool connect_to_server(const std::string& server_ip, const std::string& server_port);
+void cleanup_connection();
+std::string send_command_and_get_response(const std::string& command);
+void display_message_box(const std::string& message);
+void login_form();
+void signup_form();
+void main_menu();
+void command_interface();
 
-// Function prototypes
-void init_ncurses();
-void draw_login_screen();
-void draw_main_menu();
-void draw_book_list();
-void draw_search_form();
-void draw_checkout_form();
-void draw_return_form();
-void draw_history_view();
-void handle_login(SSL* ssl, const std::string& username, const std::string& password);
-void handle_command(SSL* ssl, const std::string& command);
-void parse_books_list(const std::string& response);
-void cleanup_ncurses();
+// Initialize OpenSSL
+void init_openssl() {
+    SSL_load_error_strings();
+    OpenSSL_add_ssl_algorithms();
+    
+    const SSL_METHOD* method = TLS_client_method();
+    ctx = SSL_CTX_new(method);
+    if (!ctx) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+    
+    // Set TLS 1.3 as the only allowed protocol version
+    if (SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION) != 1) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+    
+    if (SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION) != 1) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+}
+
+// Clean up OpenSSL
+void cleanup_openssl() {
+    if (ssl) {
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        ssl = nullptr;
+    }
+    
+    if (ctx) {
+        SSL_CTX_free(ctx);
+        ctx = nullptr;
+    }
+    
+    EVP_cleanup();
+    ERR_free_strings();
+}
 
 // Get sockaddr, IPv4 or IPv6
 void* get_in_addr(struct sockaddr* sa) {
@@ -69,1171 +92,588 @@ void* get_in_addr(struct sockaddr* sa) {
     return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-// Initialize ncurses settings
-void init_ncurses() {
-    initscr();              // Start ncurses mode
-    cbreak();               // Line buffering disabled
-    keypad(stdscr, TRUE);   // Enable function keys
-    noecho();               // Don't echo while getting input
-    start_color();          // Enable color
-    curs_set(0);            // Hide cursor
-    
-    // Define color pairs
-    init_pair(1, COLOR_WHITE, COLOR_BLUE);    // Title bar
-    init_pair(2, COLOR_BLACK, COLOR_WHITE);   // Selected item
-    init_pair(3, COLOR_GREEN, COLOR_BLACK);   // Success message
-    init_pair(4, COLOR_RED, COLOR_BLACK);     // Error message
-}
+// Connect to the server
+bool connect_to_server(const std::string& server_ip, const std::string& server_port) {
+    struct addrinfo hints, *servinfo, *p;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
 
-// Draw the login screen
-void draw_login_screen() {
-    clear();
-    
-    // Draw title bar
-    attron(COLOR_PAIR(1));
-    mvprintw(0, 0, "SECURE VIDEO GAME RENTAL SYSTEM - LOGIN");
-    for (int i = 40; i < COLS; i++) {
-        mvprintw(0, i, " ");
+    int rv = getaddrinfo(server_ip.c_str(), server_port.c_str(), &hints, &servinfo);
+    if (rv != 0) {
+        return false;
     }
-    attroff(COLOR_PAIR(1));
-    
-    // Draw login form with visible boxes
-    mvprintw(3, 2, "Username: ");
-    attron(A_UNDERLINE);
-    for (int i = 0; i < 20; i++) {
-        mvprintw(3, 12 + i, " ");
-    }
-    attroff(A_UNDERLINE);
-    
-    mvprintw(5, 2, "Password: ");
-    attron(A_UNDERLINE);
-    for (int i = 0; i < 20; i++) {
-        mvprintw(5, 12 + i, " ");
-    }
-    attroff(A_UNDERLINE);
-    
-    // Draw instructions
-    mvprintw(LINES - 2, 2, "Press TAB to switch fields, ENTER to login");
-    
-    refresh();
-}
 
-// Draw the main menu screen
-void draw_main_menu() {
-    clear();
-    
-    // Draw title bar
-    attron(COLOR_PAIR(1));
-    mvprintw(0, 0, "MAIN MENU - Logged in as: %s", username.c_str());
-    for (int i = 30 + username.length(); i < COLS; i++) {
-        mvprintw(0, i, " ");
-    }
-    attroff(COLOR_PAIR(1));
-    
-    // Draw menu options
-    const char* menu_items[] = {
-        "1. Browse Games",
-        "2. Search Games",
-        "3. Check-out Game",
-        "4. Return Game",
-        "5. View Rental History",
-        "6. Logout"
-    };
-    
-    for (int i = 0; i < 6; i++) {
-        if (i == highlighted_item) {
-            attron(COLOR_PAIR(2));
-            mvprintw(i + 3, 2, "%s", menu_items[i]);
-            attroff(COLOR_PAIR(2));
-        } else {
-            mvprintw(i + 3, 2, "%s", menu_items[i]);
+    // Loop through results and connect to the first we can
+    for (p = servinfo; p != nullptr; p = p->ai_next) {
+        sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (sockfd == -1) {
+            continue;
         }
-    }
-    
-    // Draw instructions
-    mvprintw(LINES - 2, 2, "Use UP/DOWN arrows to navigate, ENTER to select");
-    
-    refresh();
-}
 
-// Draw the book list screen
-void draw_book_list() {
-    clear();
-    
-    // Draw title bar
-    attron(COLOR_PAIR(1));
-    mvprintw(0, 0, "AVAILABLE GAMES - Logged in as: %s", username.c_str());
-    for (int i = 30 + username.length(); i < COLS; i++) {
-        mvprintw(0, i, " ");
-    }
-    attroff(COLOR_PAIR(1));
-    
-    // If books list is empty, populate with some sample games for testing UI-only mode
-    if (books.empty()) {
-        books = {
-            "1. The Legend of Zelda: Breath of the Wild | Nintendo | Available",
-            "2. God of War | Sony | Available",
-            "3. Red Dead Redemption 2 | Rockstar Games | Available",
-            "4. Super Mario Odyssey | Nintendo | Checked out",
-            "5. Cyberpunk 2077 | CD Projekt Red | Available",
-            "6. Elden Ring | FromSoftware | Available",
-            "7. Animal Crossing: New Horizons | Nintendo | Checked out",
-            "8. Final Fantasy VII Remake | Square Enix | Available",
-            "9. The Last of Us Part II | Naughty Dog | Available",
-            "10. Halo Infinite | 343 Industries | Available",
-            "11. Minecraft | Mojang | Available",
-            "12. Ghost of Tsushima | Sucker Punch | Checked out"
-        };
-    }
-    
-    // Calculate visible items based on screen height
-    int max_display_items = LINES - 6;  // Leave room for title and instructions
-    
-    // Draw column headers
-    mvprintw(2, 2, "ID  TITLE                                  PUBLISHER               STATUS");
-    mvprintw(3, 2, "--------------------------------------------------------------------------------");
-    
-    // Display books with scrolling
-    int end_idx = std::min(static_cast<int>(books.size()), scroll_offset + max_display_items);
-    for (int i = scroll_offset; i < end_idx; i++) {
-        if (i == highlighted_item) {
-            attron(COLOR_PAIR(2));
-            // Fill the entire line
-            for (int j = 0; j < COLS - 4; j++) {
-                mvprintw(i - scroll_offset + 4, 2 + j, " ");
-            }
-            mvprintw(i - scroll_offset + 4, 2, "%s", books[i].c_str());
-            attroff(COLOR_PAIR(2));
-        } else {
-            mvprintw(i - scroll_offset + 4, 2, "%s", books[i].c_str());
+        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+            close(sockfd);
+            continue;
         }
-    }
-    
-    // Draw scroll indicators if needed
-    if (scroll_offset > 0) {
-        mvprintw(4, COLS - 3, "↑");
-    }
-    if (books.size() > scroll_offset + max_display_items) {
-        mvprintw(LINES - 3, COLS - 3, "↓");
-    }
-    
-    // Draw instructions
-    mvprintw(LINES - 2, 2, "Use UP/DOWN to navigate, ENTER to select, B to go back");
-    
-    refresh();
-}
 
-// Draw the search form screen
-void draw_search_form() {
-    clear();
-    
-    // Draw title bar
-    attron(COLOR_PAIR(1));
-    mvprintw(0, 0, "SEARCH GAMES - Logged in as: %s", username.c_str());
-    for (int i = 30 + username.length(); i < COLS; i++) {
-        mvprintw(0, i, " ");
+        break;
     }
-    attroff(COLOR_PAIR(1));
-    
-    // Draw search form
-    mvprintw(3, 2, "Search by title: ");
-    attron(A_UNDERLINE);
-    for (int i = 0; i < 30; i++) {
-        mvprintw(3, 18 + i, " ");
-    }
-    attroff(A_UNDERLINE);
-    
-    // Draw instructions
-    mvprintw(LINES - 2, 2, "Type your search query and press ENTER, B to go back");
-    
-    refresh();
-}
 
-// Draw the checkout form screen
-void draw_checkout_form() {
-    clear();
-    
-    // Draw title bar
-    attron(COLOR_PAIR(1));
-    mvprintw(0, 0, "CHECK-OUT GAME - Logged in as: %s", username.c_str());
-    for (int i = 30 + username.length(); i < COLS; i++) {
-        mvprintw(0, i, " ");
-    }
-    attroff(COLOR_PAIR(1));
-    
-    // Draw form
-    mvprintw(3, 2, "Game ID: ");
-    attron(A_UNDERLINE);
-    for (int i = 0; i < 5; i++) {
-        mvprintw(3, 11 + i, " ");
-    }
-    attroff(A_UNDERLINE);
-    
-    mvprintw(5, 2, "Days to rent (1-14): ");
-    attron(A_UNDERLINE);
-    for (int i = 0; i < 3; i++) {
-        mvprintw(5, 23 + i, " ");
-    }
-    attroff(A_UNDERLINE);
-    
-    // Draw instructions
-    mvprintw(LINES - 2, 2, "Press TAB to switch fields, ENTER to submit, B to go back");
-    
-    refresh();
-}
-
-// Draw the return form screen
-void draw_return_form() {
-    clear();
-    
-    // Draw title bar
-    attron(COLOR_PAIR(1));
-    mvprintw(0, 0, "RETURN GAME - Logged in as: %s", username.c_str());
-    for (int i = 30 + username.length(); i < COLS; i++) {
-        mvprintw(0, i, " ");
-    }
-    attroff(COLOR_PAIR(1));
-    
-    // Draw form
-    mvprintw(3, 2, "Game ID to return: ");
-    attron(A_UNDERLINE);
-    for (int i = 0; i < 5; i++) {
-        mvprintw(3, 20 + i, " ");
-    }
-    attroff(A_UNDERLINE);
-    
-    // Draw instructions
-    mvprintw(LINES - 2, 2, "Enter game ID and press ENTER to submit, B to go back");
-    
-    refresh();
-}
-
-// Draw the rental history view
-void draw_history_view() {
-    clear();
-    
-    // Draw title bar
-    attron(COLOR_PAIR(1));
-    mvprintw(0, 0, "RENTAL HISTORY - Logged in as: %s", username.c_str());
-    for (int i = 30 + username.length(); i < COLS; i++) {
-        mvprintw(0, i, " ");
-    }
-    attroff(COLOR_PAIR(1));
-    
-    // Sample rental history for UI testing
-    std::vector<std::string> history = {
-        "2023-04-15 | Super Mario Odyssey | Rented for 7 days | Returned on time",
-        "2023-05-02 | Elden Ring | Rented for 10 days | Returned on time",
-        "2023-05-20 | God of War | Rented for 5 days | Returned 2 days late",
-        "2023-06-10 | Minecraft | Rented for 3 days | Returned on time",
-        "2023-07-05 | Animal Crossing: New Horizons | Rented for 14 days | Currently checked out"
-    };
-    
-    // Draw column headers
-    mvprintw(2, 2, "DATE       | TITLE                      | RENTAL PERIOD    | STATUS");
-    mvprintw(3, 2, "-------------------------------------------------------------------------");
-    
-    // Display rental history
-    for (size_t i = 0; i < history.size(); i++) {
-        mvprintw(i + 4, 2, "%s", history[i].c_str());
-    }
-    
-    // Draw instructions
-    mvprintw(LINES - 2, 2, "Press B to go back to main menu");
-    
-    refresh();
-}
-
-// Clean up ncurses before exiting
-void cleanup_ncurses() {
-    endwin();
-}
-
-// Handle login with the server
-bool handle_login(SSL* ssl, const std::string& username, const std::string& password, std::string& server_msg) {
-    if (!ssl) return false;
-    
-    std::array<char, MAXDATASIZE> buffer;
-    
-    // Send USER command
-    std::string user_cmd = "USER " + username + "\r\n";
-    if (SSL_write(ssl, user_cmd.c_str(), user_cmd.length()) <= 0) {
-        server_msg = "Error sending USER command to server";
+    if (p == nullptr) {
         return false;
     }
-    
-    // Read USER response
-    int bytes = 0;
-    for (int attempts = 0; attempts < 5; attempts++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        bytes = SSL_read(ssl, buffer.data(), buffer.size() - 1);
-        if (bytes > 0) break;
-    }
-    
-    if (bytes <= 0) {
-        server_msg = "No response received from server for USER command";
-        return false;
-    }
-    
-    buffer[bytes] = '\0';
-    std::string user_response = buffer.data();
-    server_msg = user_response;
-    
-    // Check if this is a new user (331 response contains generated password)
-    if (user_response.find("331") != std::string::npos && 
-        user_response.find("Password:") != std::string::npos) {
-        // New user was created, no need to send PASS
-        return true;
-    }
-    
-    // For existing users, send PASS command
-    std::string pass_cmd = "PASS " + password + "\r\n";
-    if (SSL_write(ssl, pass_cmd.c_str(), pass_cmd.length()) <= 0) {
-        server_msg = "Error sending PASS command to server";
-        return false;
-    }
-    
-    // Read PASS response with retries
-    bytes = 0;
-    for (int attempts = 0; attempts < 5; attempts++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        bytes = SSL_read(ssl, buffer.data(), buffer.size() - 1);
-        if (bytes > 0) break;
-    }
-    
-    if (bytes <= 0) {
-        server_msg = "No response received from server for PASS command";
-        return false;
-    }
-    
-    buffer[bytes] = '\0';
-    server_msg = buffer.data();
-    
-    // Success if response contains code 230
-    return server_msg.find("230") != std::string::npos;
-}
 
-// Draw registration success screen
-void draw_registration_screen(const std::string& username, const std::string& generated_password) {
-    clear();
-    
-    // Draw title bar
-    attron(COLOR_PAIR(1));
-    mvprintw(0, 0, "NEW USER REGISTRATION");
-    for (int i = 20; i < COLS; i++) {
-        mvprintw(0, i, " ");
-    }
-    attroff(COLOR_PAIR(1));
-    
-    // Show registration info
-    mvprintw(3, 2, "A new account has been created for you!");
-    attron(COLOR_PAIR(3));
-    mvprintw(5, 2, "Username: %s", username.c_str());
-    mvprintw(6, 2, "Generated Password: %s", generated_password.c_str());
-    attroff(COLOR_PAIR(3));
-    
-    // Important notice
-    attron(A_BOLD);
-    mvprintw(8, 2, "IMPORTANT: Please save this password!");
-    attroff(A_BOLD);
-    mvprintw(9, 2, "You will need it for future logins.");
-    
-    // Draw instructions
-    mvprintw(LINES - 2, 2, "Press ENTER to continue to login");
-    
-    refresh();
-}
+    freeaddrinfo(servinfo);
 
-// Send a command to the server and get response
-bool handle_command(SSL* ssl, const std::string& command, std::string& response) {
-    if (!ssl) return false;
-    
-    std::array<char, MAXDATASIZE> buffer;
-    
-    // Add CRLF if needed
-    std::string cmd = command;
-    if (cmd.substr(cmd.length() - 2) != "\r\n") {
-        cmd += "\r\n";
-    }
-    
-    // Send command
-    if (SSL_write(ssl, cmd.c_str(), cmd.length()) <= 0) {
+    // Create SSL object and attach to socket
+    ssl = SSL_new(ctx);
+    if (!ssl) {
+        ERR_print_errors_fp(stderr);
+        close(sockfd);
         return false;
     }
-    
-    // Read response with retries
-    int bytes = 0;
-    for (int attempts = 0; attempts < 5; attempts++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        bytes = SSL_read(ssl, buffer.data(), buffer.size() - 1);
-        if (bytes > 0) break;
-    }
-    
-    if (bytes <= 0) {
+
+    SSL_set_fd(ssl, sockfd);
+
+    // Perform SSL handshake
+    if (SSL_connect(ssl) != 1) {
+        ERR_print_errors_fp(stderr);
+        SSL_free(ssl);
+        ssl = nullptr;
+        close(sockfd);
         return false;
     }
-    
-    buffer[bytes] = '\0';
-    response = buffer.data();
+
+    is_connected = true;
     return true;
 }
 
-// Parse LIST response to get books
-void parse_books_list(const std::string& response) {
-    books.clear();
-    
-    std::stringstream ss(response);
-    std::string line;
-    
-    // Skip the first line which is the response code
-    std::getline(ss, line);
-    
-    // Parse each line of the response
-    while (std::getline(ss, line)) {
-        if (line.empty() || line == ".\r") {
-            break;  // End of list
-        }
-        
-        // Remove \r if present
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        
-        books.push_back(line);
+// Clean up the connection
+void cleanup_connection() {
+    if (ssl) {
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        ssl = nullptr;
     }
+
+    if (sockfd != -1) {
+        close(sockfd);
+        sockfd = -1;
+    }
+
+    is_connected = false;
+    is_authenticated = false;
 }
 
-int main(int argc, char* argv[]) {
-    bool skip_connection = false;
-    
-    if (argc >= 2 && std::string(argv[1]) == "--ui-only") {
-        skip_connection = true;
-        std::cout << "Running in UI-only mode (no server connection)" << std::endl;
-    } else if (argc != 2) {
-        std::cerr << "usage: ncurses_client client.conf\n";
-        std::cerr << "       ncurses_client --ui-only\n";
-        return 1;
+// Send a command to the server and get the response
+std::string send_command_and_get_response(const std::string& command) {
+    if (!is_connected || !ssl) {
+        return "Not connected to server";
     }
 
-    SSL* ssl = nullptr;
-    SSL_CTX* ctx = nullptr;
-    int sockfd = -1;
+    // Add CRLF to the end of the command (for proper protocol formatting)
+    std::string cmd = command + "\r\n";
     
-    if (!skip_connection) {
-        // Initialize OpenSSL
-        SSL_library_init();
-        OpenSSL_add_all_algorithms();
-        SSL_load_error_strings();
-        // ERR_load_BIO_strings() is deprecated in OpenSSL 3.0
+    // Send command
+    if (SSL_write(ssl, cmd.c_str(), cmd.length()) <= 0) {
+        return "Error sending command to server";
+    }
+
+    // Read response
+    char buffer[MAXDATASIZE];
+    int bytes = SSL_read(ssl, buffer, MAXDATASIZE - 1);
+    if (bytes <= 0) {
+        return "Error reading response from server";
+    }
+
+    buffer[bytes] = '\0';
+    return std::string(buffer);
+}
+
+// Display a message box with the given message
+void display_message_box(const std::string& message) {
+    clear();
+    int height, width;
+    getmaxyx(stdscr, height, width);
+    
+    WINDOW* win = newwin(10, width - 20, height/2 - 5, 10);
+    box(win, 0, 0);
+    
+    mvwprintw(win, 1, 2, "Message");
+    mvwprintw(win, 3, 2, "%s", message.c_str());
+    mvwprintw(win, 8, 2, "Press any key to continue...");
+    
+    wrefresh(win);
+    wgetch(win);
+    
+    delwin(win);
+    refresh();
+}
+
+// Login form
+void login_form() {
+    clear();
+    
+    FIELD *fields[3];
+    FORM *form;
+    int ch;
+    
+    // Initialize fields
+    fields[0] = new_field(1, 30, 4, 15, 0, 0);
+    fields[1] = new_field(1, 30, 6, 15, 0, 0);
+    fields[2] = NULL;
+    
+    // Set field options
+    set_field_back(fields[0], A_UNDERLINE);
+    set_field_back(fields[1], A_UNDERLINE);
+    field_opts_off(fields[1], O_PUBLIC); // Password field - don't show
+    
+    // Create the form
+    form = new_form(fields);
+    
+    // Post the form
+    post_form(form);
+    
+    // Labels
+    mvprintw(4, 5, "Username:");
+    mvprintw(6, 5, "Password:");
+    mvprintw(10, 5, "Press F1 or Enter to submit, F2 to cancel");
+    refresh();
+    
+    // Form navigation
+    while((ch = getch()) != KEY_F(1) && ch != 10) { // 10 is Enter key
+        switch(ch) {
+            case KEY_DOWN:
+                form_driver(form, REQ_NEXT_FIELD);
+                form_driver(form, REQ_END_LINE);
+                break;
+            case KEY_UP:
+                form_driver(form, REQ_PREV_FIELD);
+                form_driver(form, REQ_END_LINE);
+                break;
+            case KEY_BACKSPACE:
+            case 127:
+                form_driver(form, REQ_DEL_PREV);
+                break;
+            case KEY_F(2):
+                // Free form resources
+                unpost_form(form);
+                free_form(form);
+                free_field(fields[0]);
+                free_field(fields[1]);
+                return;
+            default:
+                form_driver(form, ch);
+                break;
+        }
+    }
+    
+    // Tell the form to finish editing
+    form_driver(form, REQ_VALIDATION);
+    
+    // Get field values
+    char* username = field_buffer(fields[0], 0);
+    char* password = field_buffer(fields[1], 0);
+    
+    // Trim whitespace
+    std::string username_str(username);
+    std::string password_str(password);
+    username_str.erase(username_str.find_last_not_of(" \n\r\t") + 1);
+    password_str.erase(password_str.find_last_not_of(" \n\r\t") + 1);
+    
+    // Send login commands
+    std::string user_response = send_command_and_get_response("USER " + username_str);
+    display_message_box("Server response: " + user_response);
+    
+    std::string pass_response = send_command_and_get_response("PASS " + password_str);
+    display_message_box("Server response: " + pass_response);
+    
+    // Check if login was successful
+    if (pass_response.find("230") != std::string::npos) {
+        is_authenticated = true;
+        current_user = username_str;
+    }
+    
+    // Free form resources
+    unpost_form(form);
+    free_form(form);
+    free_field(fields[0]);
+    free_field(fields[1]);
+}
+
+// Signup form
+void signup_form() {
+    clear();
+    
+    FIELD *fields[4];
+    FORM *form;
+    int ch;
+    
+    // Initialize fields
+    fields[0] = new_field(1, 30, 4, 15, 0, 0);
+    fields[1] = new_field(1, 30, 6, 15, 0, 0);
+    fields[2] = new_field(1, 30, 8, 15, 0, 0);
+    fields[3] = NULL;
+    
+    // Set field options
+    set_field_back(fields[0], A_UNDERLINE);
+    set_field_back(fields[1], A_UNDERLINE);
+    set_field_back(fields[2], A_UNDERLINE);
+    field_opts_off(fields[1], O_PUBLIC); // Password field - don't show
+    field_opts_off(fields[2], O_PUBLIC); // Confirm password field - don't show
+    
+    // Create the form
+    form = new_form(fields);
+    
+    // Post the form
+    post_form(form);
+    
+    // Labels
+    mvprintw(4, 5, "Username:");
+    mvprintw(6, 5, "Password:");
+    mvprintw(8, 5, "Confirm Password:");
+    mvprintw(12, 5, "Press F1 or Enter to submit, F2 to cancel");
+    refresh();
+    
+    // Form navigation
+    while((ch = getch()) != KEY_F(1) && ch != 10) { // 10 is Enter key
+        switch(ch) {
+            case KEY_DOWN:
+                form_driver(form, REQ_NEXT_FIELD);
+                form_driver(form, REQ_END_LINE);
+                break;
+            case KEY_UP:
+                form_driver(form, REQ_PREV_FIELD);
+                form_driver(form, REQ_END_LINE);
+                break;
+            case KEY_BACKSPACE:
+            case 127:
+                form_driver(form, REQ_DEL_PREV);
+                break;
+            case KEY_F(2):
+                // Free form resources
+                unpost_form(form);
+                free_form(form);
+                free_field(fields[0]);
+                free_field(fields[1]);
+                free_field(fields[2]);
+                return;
+            default:
+                form_driver(form, ch);
+                break;
+        }
+    }
+    
+    // Tell the form to finish editing
+    form_driver(form, REQ_VALIDATION);
+    
+    // Get field values
+    char* username = field_buffer(fields[0], 0);
+    char* password = field_buffer(fields[1], 0);
+    char* confirm = field_buffer(fields[2], 0);
+    
+    // Trim whitespace
+    std::string username_str(username);
+    std::string password_str(password);
+    std::string confirm_str(confirm);
+    username_str.erase(username_str.find_last_not_of(" \n\r\t") + 1);
+    password_str.erase(password_str.find_last_not_of(" \n\r\t") + 1);
+    confirm_str.erase(confirm_str.find_last_not_of(" \n\r\t") + 1);
+    
+    // Check if passwords match
+    if (password_str != confirm_str) {
+        display_message_box("Passwords do not match.");
         
-        // Read configuration from file
-        std::optional<std::string> serverIP, serverPort;
-        std::filesystem::path configFilePath(argv[1]);
-
-        if (!std::filesystem::is_regular_file(configFilePath)) {
-            std::cerr << "Error opening config file: " << argv[1] << std::endl;
-            return 1;
+        // Free form resources
+        unpost_form(form);
+        free_form(form);
+        free_field(fields[0]);
+        free_field(fields[1]);
+        free_field(fields[2]);
+        return;
+    }
+    
+    // Send signup command
+    std::string signup_response = send_command_and_get_response("NEWUSER " + username_str);
+    display_message_box("Server response: " + signup_response);
+    
+    if (signup_response.find("230") != std::string::npos) {
+        // If successful, try to login with the new credentials
+        std::string user_response = send_command_and_get_response("USER " + username_str);
+        std::string pass_response = send_command_and_get_response("PASS " + password_str);
+        
+        if (pass_response.find("230") != std::string::npos) {
+            is_authenticated = true;
+            current_user = username_str;
+            display_message_box("Login successful with new account.");
+        } else {
+            display_message_box("Account created, but login failed: " + pass_response);
         }
+    }
+    
+    // Free form resources
+    unpost_form(form);
+    free_form(form);
+    free_field(fields[0]);
+    free_field(fields[1]);
+    free_field(fields[2]);
+}
 
-        std::ifstream configFile(argv[1]);
-        std::string line;
-        while (std::getline(configFile, line)) {
-            if (line.find("SERVER_IP=") == 0) {
-                serverIP = line.substr(10);
-            } else if (line.find("SERVER_PORT=") == 0) {
-                serverPort = line.substr(12);
-            }
+// Main menu
+void main_menu() {
+    ITEM** items;
+    MENU* menu;
+    int n_choices, c;
+    
+    // Menu choices
+    const char* choices[] = {
+        "Login",
+        "Signup",
+        "Exit",
+    };
+    n_choices = ARRAY_SIZE(choices);
+    
+    // Create items
+    items = (ITEM**)calloc(n_choices + 1, sizeof(ITEM*));
+    for(int i = 0; i < n_choices; ++i) {
+        items[i] = new_item(choices[i], "");
+    }
+    items[n_choices] = NULL;
+    
+    // Create menu
+    menu = new_menu(items);
+    
+    // Set main window and sub window
+    set_menu_win(menu, stdscr);
+    set_menu_sub(menu, derwin(stdscr, n_choices, 40, 8, 20));
+    set_menu_mark(menu, " * ");
+    
+    // Print a border and title
+    box(stdscr, 0, 0);
+    mvprintw(2, 2, "Game Rental System - Main Menu");
+    mvprintw(20, 2, "F1 or Enter to select, q to exit");
+    refresh();
+    
+    // Post the menu
+    post_menu(menu);
+    refresh();
+    
+    // Menu navigation
+    while((c = getch()) != 'q') {
+        switch(c) {
+            case KEY_DOWN:
+                menu_driver(menu, REQ_DOWN_ITEM);
+                break;
+            case KEY_UP:
+                menu_driver(menu, REQ_UP_ITEM);
+                break;
+            case KEY_F(1): // Select option
+            case 10:      // Enter key (ASCII 10)
+                {
+                    ITEM* cur = current_item(menu);
+                    int index = item_index(cur);
+                    
+                    if (index == 0) { // Login
+                        login_form();
+                        if (is_authenticated) {
+                            // Free menu resources
+                            unpost_menu(menu);
+                            for(int i = 0; i < n_choices; ++i)
+                                free_item(items[i]);
+                            free_menu(menu);
+                            
+                            // Go to command interface
+                            command_interface();
+                            return;
+                        }
+                    } else if (index == 1) { // Signup
+                        signup_form();
+                        if (is_authenticated) {
+                            // Free menu resources
+                            unpost_menu(menu);
+                            for(int i = 0; i < n_choices; ++i)
+                                free_item(items[i]);
+                            free_menu(menu);
+                            
+                            // Go to command interface
+                            command_interface();
+                            return;
+                        }
+                    } else if (index == 2) { // Exit
+                        // Free menu resources
+                        unpost_menu(menu);
+                        for(int i = 0; i < n_choices; ++i)
+                            free_item(items[i]);
+                        free_menu(menu);
+                        return;
+                    }
+                    
+                    // Redraw menu
+                    clear();
+                    box(stdscr, 0, 0);
+                    mvprintw(2, 2, "Game Rental System - Main Menu");
+                    mvprintw(20, 2, "F1 or Enter to select, q to exit");
+                    post_menu(menu);
+                    refresh();
+                }
+                break;
         }
-        configFile.close();
+    }
+    
+    // Free menu resources
+    unpost_menu(menu);
+    for(int i = 0; i < n_choices; ++i)
+        free_item(items[i]);
+    free_menu(menu);
+}
 
-        if (!serverIP.has_value() || !serverPort.has_value()) {
-            std::cerr << "Invalid config file format.\n";
-            return 1;
-        }
-
-        std::cout << "Attempting to connect to " << *serverIP << ":" << *serverPort << "..." << std::endl;
-
-        // Set up connection hints
-        addrinfo hints, *servinfo, *p;
-        memset(&hints, 0, sizeof hints);
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-
-        // Get address information
-        int rv = getaddrinfo(serverIP->c_str(), serverPort->c_str(), &hints, &servinfo);
-        if (rv != 0) {
-            std::cerr << "getaddrinfo: " << gai_strerror(rv) << std::endl;
-            return 1;
-        }
-
-        // Loop through results and try to connect
-        for (p = servinfo; p != nullptr; p = p->ai_next) {
-            sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-            if (sockfd == -1) {
-                perror("client: socket");
-                continue;
-            }
-
-            if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
-                perror("client: connect");
-                close(sockfd);
-                continue;
-            }
-
+// Command interface
+void command_interface() {
+    clear();
+    
+    // Create windows for command input and output
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    
+    WINDOW* output_win = newwin(max_y - 5, max_x, 0, 0);
+    WINDOW* input_win = newwin(3, max_x, max_y - 3, 0);
+    scrollok(output_win, TRUE);
+    
+    // Draw borders
+    box(output_win, 0, 0);
+    box(input_win, 0, 0);
+    
+    // Add titles
+    mvwprintw(output_win, 0, 2, "Server Output");
+    mvwprintw(input_win, 0, 2, "Command Input (type 'BYE' to logout)");
+    
+    // Display welcome and help
+    std::string help_response = send_command_and_get_response("HELP");
+    mvwprintw(output_win, 1, 1, "Welcome, %s!", current_user.c_str());
+    mvwprintw(output_win, 2, 1, "%s", help_response.c_str());
+    
+    wrefresh(output_win);
+    wrefresh(input_win);
+    
+    // Command input loop
+    char cmd_buf[256];
+    int y_offset = 3; // Start output after welcome and help
+    
+    wmove(input_win, 1, 1);
+    wrefresh(input_win);
+    
+    while (true) {
+        // Get command from user
+        echo();
+        wgetstr(input_win, cmd_buf);
+        noecho();
+        
+        std::string command(cmd_buf);
+        
+        // Clear input window for next command
+        wclear(input_win);
+        box(input_win, 0, 0);
+        mvwprintw(input_win, 0, 2, "Command Input (type 'BYE' to logout)");
+        wmove(input_win, 1, 1);
+        wrefresh(input_win);
+        
+        // Handle exit command
+        if (command == "BYE" || command == "bye") {
+            send_command_and_get_response("BYE");
             break;
         }
-
-        if (p == nullptr) {
-            std::cerr << "client: failed to connect\n";
-            std::cerr << "Running in UI-only mode for testing\n";
-            skip_connection = true;
-        } else {
-            // Display connection information
-            char s[INET6_ADDRSTRLEN];
-            inet_ntop(p->ai_family, get_in_addr((struct sockaddr*)p->ai_addr), s, sizeof s);
-            std::cout << "client: connecting to " << s << std::endl;
-
-            freeaddrinfo(servinfo);
-            
-            // Set up SSL context
-            const SSL_METHOD *method = TLS_client_method();
-            ctx = SSL_CTX_new(method);
-            
-            if (!ctx) {
-                ERR_print_errors_fp(stderr);
-                close(sockfd);
-                return 1;
+        
+        // Send command to server
+        std::string response = send_command_and_get_response(command);
+        
+        // Display command and response
+        mvwprintw(output_win, y_offset, 1, "> %s", command.c_str());
+        y_offset++;
+        
+        // Handle multi-line responses
+        std::istringstream iss(response);
+        std::string line;
+        while (std::getline(iss, line)) {
+            // Check if we need to scroll
+            if (y_offset >= max_y - 7) {
+                // Scroll content up
+                wscrl(output_win, 5);
+                y_offset -= 5;
             }
             
-            // Configure TLS 1.3
-            if (!SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION) ||
-                !SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION)) {
-                std::cerr << "Error setting TLS protocol version" << std::endl;
-                SSL_CTX_free(ctx);
-                close(sockfd);
-                return 1;
-            }
-            
-            // Create SSL object
-            ssl = SSL_new(ctx);
-            if (!ssl) {
-                std::cerr << "Error creating SSL object" << std::endl;
-                SSL_CTX_free(ctx);
-                close(sockfd);
-                return 1;
-            }
-            
-            // Set up SSL connection
-            SSL_set_fd(ssl, sockfd);
-            if (SSL_connect(ssl) <= 0) {
-                ERR_print_errors_fp(stderr);
-                SSL_free(ssl);
-                SSL_CTX_free(ctx);
-                close(sockfd);
-                std::cerr << "Running in UI-only mode for testing\n";
-                skip_connection = true;
-            } else {
-                std::cout << "TLS handshake completed." << std::endl;
-            }
+            mvwprintw(output_win, y_offset, 1, "%s", line.c_str());
+            y_offset++;
         }
+        y_offset++; // Extra line between commands
+        
+        // Refresh windows
+        wrefresh(output_win);
+        wrefresh(input_win);
     }
     
-    std::cout << "Starting ncurses interface..." << std::endl;
+    // Clean up windows
+    delwin(output_win);
+    delwin(input_win);
+    
+    is_authenticated = false;
+    current_user = "";
+}
+
+// Main function
+int main(int argc, char* argv[]) {
+    // Check command line arguments
+    if (argc != 2) {
+        std::cerr << "Usage: " << argv[0] << " client.conf" << std::endl;
+        return 1;
+    }
+    
+    // Read configuration from file
+    std::string server_ip, server_port;
+    std::ifstream configFile(argv[1]);
+    if (!configFile.is_open()) {
+        std::cerr << "Error opening config file: " << argv[1] << std::endl;
+        return 1;
+    }
+    
+    std::string line;
+    while (std::getline(configFile, line)) {
+        if (line.find("SERVER_IP=") == 0) {
+            server_ip = line.substr(10);
+        } else if (line.find("SERVER_PORT=") == 0) {
+            server_port = line.substr(12);
+        }
+    }
+    configFile.close();
+    
+    if (server_ip.empty() || server_port.empty()) {
+        std::cerr << "Invalid config file format." << std::endl;
+        return 1;
+    }
+    
+    // Initialize OpenSSL
+    init_openssl();
     
     // Initialize ncurses
-    init_ncurses();
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
     
-    // Force initial draw of login screen
-    draw_login_screen();
-    
-    // Main TUI loop
-    bool quit = false;
-    std::string input_username;
-    std::string input_password;
-    int current_field = 0;  // 0 = username, 1 = password
-    
-    while (!quit) {
-        int ch = 0;  // Initialize ch outside the switch to avoid variable initialization issues
-        
-        // Handle the current TUI state
-        switch (current_state) {
-            case TUIState::LOGIN:
-                {
-                    static bool registration_mode = false;
-                    static std::string generated_password;
-                    
-                    draw_login_screen();
-                    
-                    // If in registration mode, show that we're using generated password
-                    if (registration_mode) {
-                        attron(COLOR_PAIR(3));
-                        mvprintw(7, 2, "Using server-generated password");
-                        attroff(COLOR_PAIR(3));
-                    }
-                    
-                    // Position cursor based on current field
-                    if (current_field == 0) {
-                        mvprintw(3, 12, "%s", input_username.c_str());
-                        move(3, 12 + input_username.length());
-                        curs_set(1);  // Show cursor
-                    } else {
-                        if (registration_mode) {
-                            // Show the generated password in the password field
-                            mvprintw(5, 12, "%s", generated_password.c_str());
-                        } else {
-                            // Show asterisks for normal password input
-                            mvprintw(5, 12, "%s", std::string(input_password.length(), '*').c_str());
-                        }
-                        
-                        if (!registration_mode) {
-                            move(5, 12 + input_password.length());
-                            curs_set(1);  // Show cursor
-                        }
-                    }
-                    
-                    // Get input
-                    ch = getch();
-                    switch (ch) {
-                        case '\t':
-                            // Switch between username and password fields
-                            if (!registration_mode) {
-                                current_field = (current_field + 1) % 2;
-                            }
-                            break;
-                        case '\n':
-                            // Attempt login
-                            if (registration_mode) {
-                                // We're in registration mode, so use the generated password
-                                input_password = generated_password;
-                                registration_mode = false;
-                            }
-                            
-                            if (!input_username.empty() && !input_password.empty()) {
-                                if (!skip_connection && ssl) {
-                                    // Show "Logging in..." message
-                                    attron(COLOR_PAIR(3));
-                                    mvprintw(7, 2, "Logging in, please wait...");
-                                    attroff(COLOR_PAIR(3));
-                                    refresh();
-                                    
-                                    // Perform actual login
-                                    std::string server_msg;
-                                    bool login_success = handle_login(ssl, input_username, input_password, server_msg);
-                                    
-                                    // Check login response
-                                    if (login_success) {
-                                        // Check if this was a new user registration
-                                        if (server_msg.find("331") != std::string::npos && 
-                                            server_msg.find("Password:") != std::string::npos) {
-                                            // Extract the generated password
-                                            size_t pwd_start = server_msg.find("Password:") + 10;
-                                            size_t pwd_end = server_msg.find("\r", pwd_start);
-                                            if (pwd_end == std::string::npos) {
-                                                pwd_end = server_msg.length();
-                                            }
-                                            
-                                            generated_password = server_msg.substr(pwd_start, pwd_end - pwd_start);
-                                            
-                                            // Show registration screen
-                                            draw_registration_screen(input_username, generated_password);
-                                            registration_mode = true;
-                                            
-                                            // Wait for user to press Enter
-                                            while (getch() != '\n') {}
-                                            
-                                            // Set to password field for next screen
-                                            input_password.clear();
-                                            current_field = 1;
-                                        } else {
-                                            // Normal login success
-                                            username = input_username;
-                                            current_state = TUIState::MAIN_MENU;
-                                            highlighted_item = 0;
-                                        }
-                                    } else if (server_msg.find("530") != std::string::npos) {
-                                        // Login failed
-                                        attron(COLOR_PAIR(4));
-                                        mvprintw(7, 2, "Login failed: Invalid username or password");
-                                        attroff(COLOR_PAIR(4));
-                                        refresh();
-                                        std::this_thread::sleep_for(std::chrono::seconds(2));
-                                    } else {
-                                        // Other error
-                                        attron(COLOR_PAIR(4));
-                                        mvprintw(7, 2, "Error: %s", server_msg.c_str());
-                                        attroff(COLOR_PAIR(4));
-                                        refresh();
-                                        std::this_thread::sleep_for(std::chrono::seconds(2));
-                                    }
-                                } else {
-                                    // UI-only mode, just proceed to main menu
-                                    username = input_username;
-                                    current_state = TUIState::MAIN_MENU;
-                                    highlighted_item = 0;
-                                }
-                            }
-                            break;
-                        case KEY_BACKSPACE:
-                        case 127:
-                            // Handle backspace
-                            if (current_field == 0 && !input_username.empty() && !registration_mode) {
-                                input_username.pop_back();
-                            } else if (current_field == 1 && !input_password.empty() && !registration_mode) {
-                                input_password.pop_back();
-                            }
-                            break;
-                        default:
-                            // Add character to current field
-                            if (ch >= 32 && ch <= 126 && !registration_mode) {  // Printable ASCII
-                                if (current_field == 0) {
-                                    input_username += ch;
-                                } else {
-                                    input_password += ch;
-                                }
-                            }
-                            break;
-                    }
-                }
-                break;
-                
-            case TUIState::MAIN_MENU:
-                draw_main_menu();
-                
-                // Get input
-                ch = getch();
-                switch (ch) {
-                    case KEY_UP:
-                        highlighted_item = (highlighted_item - 1 + 6) % 6;
-                        break;
-                    case KEY_DOWN:
-                        highlighted_item = (highlighted_item + 1) % 6;
-                        break;
-                    case '\n':
-                        // Handle menu selection
-                        switch (highlighted_item) {
-                            case 0:  // Browse Games
-                                current_state = TUIState::BOOK_LIST;
-                                break;
-                            case 1:  // Search Games
-                                current_state = TUIState::SEARCH_BOOKS;
-                                break;
-                            case 2:  // Check-out Game
-                                current_state = TUIState::CHECKOUT_FORM;
-                                break;
-                            case 3:  // Return Game
-                                current_state = TUIState::RETURN_FORM;
-                                break;
-                            case 4:  // View Rental History
-                                current_state = TUIState::HISTORY_VIEW;
-                                break;
-                            case 5:  // Logout
-                                // Reset login fields
-                                input_username.clear();
-                                input_password.clear();
-                                current_field = 0;
-                                current_state = TUIState::LOGIN;
-                                break;
-                        }
-                        highlighted_item = 0;
-                        break;
-                    case 'q':
-                        quit = true;
-                        break;
-                }
-                break;
-                
-            case TUIState::BOOK_LIST:
-                // If connected to server and books list is empty, try to fetch it
-                if (!skip_connection && ssl && books.empty()) {
-                    std::string response;
-                    if (handle_command(ssl, "LIST", response)) {
-                        parse_books_list(response);
-                    }
-                }
-                
-                draw_book_list();
-                
-                // Get input
-                ch = getch();
-                switch (ch) {
-                    case KEY_UP:
-                        if (highlighted_item > 0) {
-                            highlighted_item--;
-                            // Scroll up if needed
-                            if (highlighted_item < scroll_offset) {
-                                scroll_offset--;
-                            }
-                        }
-                        break;
-                    case KEY_DOWN:
-                        if (highlighted_item < books.size() - 1) {
-                            highlighted_item++;
-                            // Calculate visible items
-                            int max_display_items = LINES - 6;
-                            // Scroll down if needed
-                            if (highlighted_item >= scroll_offset + max_display_items) {
-                                scroll_offset++;
-                            }
-                        }
-                        break;
-                    case 'b':
-                    case 'B':
-                        // Return to main menu
-                        current_state = TUIState::MAIN_MENU;
-                        highlighted_item = 0;
-                        scroll_offset = 0;
-                        break;
-                    case '\n':
-                        // For now, just show a message
-                        attron(COLOR_PAIR(3));
-                        mvprintw(LINES - 1, 2, "Selected game: %s", 
-                                 books[highlighted_item].c_str());
-                        attroff(COLOR_PAIR(3));
-                        refresh();
-                        // Give time to see the message
-                        std::this_thread::sleep_for(std::chrono::seconds(1));
-                        break;
-                }
-                break;
-                
-            case TUIState::SEARCH_BOOKS:
-                {
-                    static std::string search_query;
-                    
-                    draw_search_form();
-                    
-                    // Display current search query
-                    mvprintw(3, 18, "%s", search_query.c_str());
-                    move(3, 18 + search_query.length());
-                    curs_set(1);  // Show cursor
-                    
-                    // Get input
-                    ch = getch();
-                    switch (ch) {
-                        case '\n':
-                            // Perform search (in a real implementation, this would query the server)
-                            if (!search_query.empty()) {
-                                attron(COLOR_PAIR(3));
-                                mvprintw(5, 2, "Searching for: %s", search_query.c_str());
-                                attroff(COLOR_PAIR(3));
-                                refresh();
-                                
-                                // In UI-only mode, just filter existing books that contain the query
-                                books.clear();
-                                for (int i = 1; i <= 12; i++) {
-                                    std::string game_title;
-                                    switch (i) {
-                                        case 1: game_title = "The Legend of Zelda: Breath of the Wild"; break;
-                                        case 2: game_title = "God of War"; break;
-                                        case 3: game_title = "Red Dead Redemption 2"; break;
-                                        case 4: game_title = "Super Mario Odyssey"; break;
-                                        case 5: game_title = "Cyberpunk 2077"; break;
-                                        case 6: game_title = "Elden Ring"; break;
-                                        case 7: game_title = "Animal Crossing: New Horizons"; break;
-                                        case 8: game_title = "Final Fantasy VII Remake"; break;
-                                        case 9: game_title = "The Last of Us Part II"; break;
-                                        case 10: game_title = "Halo Infinite"; break;
-                                        case 11: game_title = "Minecraft"; break;
-                                        case 12: game_title = "Ghost of Tsushima"; break;
-                                    }
-                                    
-                                    // Publisher and status
-                                    std::string publisher;
-                                    std::string status = (i % 4 == 0) ? "Checked out" : "Available";
-                                    
-                                    switch (i) {
-                                        case 1: case 4: case 7: publisher = "Nintendo"; break;
-                                        case 2: case 9: publisher = "Sony"; break;
-                                        case 3: publisher = "Rockstar Games"; break;
-                                        case 5: publisher = "CD Projekt Red"; break;
-                                        case 6: publisher = "FromSoftware"; break;
-                                        case 8: publisher = "Square Enix"; break;
-                                        case 10: publisher = "343 Industries"; break;
-                                        case 11: publisher = "Mojang"; break;
-                                        case 12: publisher = "Sucker Punch"; break;
-                                    }
-                                    
-                                    // If game title contains search query (case-insensitive)
-                                    std::string title_lower = game_title;
-                                    std::string query_lower = search_query;
-                                    std::transform(title_lower.begin(), title_lower.end(), title_lower.begin(), ::tolower);
-                                    std::transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
-                                    
-                                    if (title_lower.find(query_lower) != std::string::npos) {
-                                        books.push_back(std::to_string(i) + ". " + game_title + " | " + publisher + " | " + status);
-                                    }
-                                }
-                                
-                                // Give time to see the message
-                                std::this_thread::sleep_for(std::chrono::seconds(1));
-                                
-                                // Show results
-                                current_state = TUIState::BOOK_LIST;
-                                highlighted_item = 0;
-                                scroll_offset = 0;
-                            }
-                            break;
-                        case KEY_BACKSPACE:
-                        case 127:
-                            // Handle backspace
-                            if (!search_query.empty()) {
-                                search_query.pop_back();
-                            }
-                            break;
-                        case 'b':
-                        case 'B':
-                            if (search_query.empty()) {
-                                // Return to main menu only if query is empty
-                                search_query.clear();
-                                current_state = TUIState::MAIN_MENU;
-                                highlighted_item = 0;
-                            } else {
-                                // Otherwise treat as input
-                                search_query += ch;
-                            }
-                            break;
-                        default:
-                            // Add character to search query
-                            if (ch >= 32 && ch <= 126) {  // Printable ASCII
-                                search_query += ch;
-                            }
-                            break;
-                    }
-                }
-                break;
-                
-            case TUIState::CHECKOUT_FORM:
-                {
-                    static std::string game_id;
-                    static std::string rental_days;
-                    static int checkout_field = 0;  // 0 = game_id, 1 = rental_days
-                    
-                    draw_checkout_form();
-                    
-                    // Position cursor based on current field and display input
-                    if (checkout_field == 0) {
-                        mvprintw(3, 11, "%s", game_id.c_str());
-                        move(3, 11 + game_id.length());
-                        curs_set(1);  // Show cursor
-                    } else {
-                        mvprintw(3, 11, "%s", game_id.c_str());
-                        mvprintw(5, 23, "%s", rental_days.c_str());
-                        move(5, 23 + rental_days.length());
-                        curs_set(1);  // Show cursor
-                    }
-                    
-                    // Get input
-                    ch = getch();
-                    switch (ch) {
-                        case '\t':
-                            // Switch between fields
-                            checkout_field = (checkout_field + 1) % 2;
-                            break;
-                        case '\n':
-                            // Process checkout
-                            if (!game_id.empty() && !rental_days.empty()) {
-                                // Validate input
-                                bool valid_id = true;
-                                for (char c : game_id) {
-                                    if (!std::isdigit(c)) {
-                                        valid_id = false;
-                                        break;
-                                    }
-                                }
-                                
-                                bool valid_days = true;
-                                int days = 0;
-                                try {
-                                    days = std::stoi(rental_days);
-                                    if (days < 1 || days > 14) {
-                                        valid_days = false;
-                                    }
-                                } catch (...) {
-                                    valid_days = false;
-                                }
-                                
-                                if (valid_id && valid_days) {
-                                    // Display success message
-                                    attron(COLOR_PAIR(3));
-                                    mvprintw(7, 2, "Game %s checked out for %s days.", 
-                                            game_id.c_str(), rental_days.c_str());
-                                    attroff(COLOR_PAIR(3));
-                                    refresh();
-                                    
-                                    // Clear input for next time
-                                    game_id.clear();
-                                    rental_days.clear();
-                                    checkout_field = 0;
-                                    
-                                    // Return to main menu after delay
-                                    std::this_thread::sleep_for(std::chrono::seconds(2));
-                                    current_state = TUIState::MAIN_MENU;
-                                    highlighted_item = 0;
-                                } else {
-                                    // Display error message
-                                    attron(COLOR_PAIR(4));
-                                    if (!valid_id) {
-                                        mvprintw(7, 2, "Error: Game ID must be a number.");
-                                    } else {
-                                        mvprintw(7, 2, "Error: Rental days must be between 1 and 14.");
-                                    }
-                                    attroff(COLOR_PAIR(4));
-                                    refresh();
-                                    std::this_thread::sleep_for(std::chrono::seconds(2));
-                                }
-                            }
-                            break;
-                        case KEY_BACKSPACE:
-                        case 127:
-                            // Handle backspace
-                            if (checkout_field == 0 && !game_id.empty()) {
-                                game_id.pop_back();
-                            } else if (checkout_field == 1 && !rental_days.empty()) {
-                                rental_days.pop_back();
-                            }
-                            break;
-                        case 'b':
-                        case 'B':
-                            // Return to main menu
-                            game_id.clear();
-                            rental_days.clear();
-                            checkout_field = 0;
-                            current_state = TUIState::MAIN_MENU;
-                            highlighted_item = 0;
-                            break;
-                        default:
-                            // Add character to current field
-                            if (ch >= 32 && ch <= 126) {  // Printable ASCII
-                                if (checkout_field == 0) {
-                                    // Only allow digits for game ID
-                                    if (std::isdigit(ch) && game_id.length() < 5) {
-                                        game_id += ch;
-                                    }
-                                } else {
-                                    // Only allow digits for rental days
-                                    if (std::isdigit(ch) && rental_days.length() < 2) {
-                                        rental_days += ch;
-                                    }
-                                }
-                            }
-                            break;
-                    }
-                }
-                break;
-                
-            case TUIState::RETURN_FORM:
-                {
-                    static std::string return_id;
-                    
-                    draw_return_form();
-                    
-                    // Display current input
-                    mvprintw(3, 20, "%s", return_id.c_str());
-                    move(3, 20 + return_id.length());
-                    curs_set(1);  // Show cursor
-                    
-                    // Get input
-                    ch = getch();
-                    switch (ch) {
-                        case '\n':
-                            // Process return
-                            if (!return_id.empty()) {
-                                // Validate input
-                                bool valid_id = true;
-                                for (char c : return_id) {
-                                    if (!std::isdigit(c)) {
-                                        valid_id = false;
-                                        break;
-                                    }
-                                }
-                                
-                                if (valid_id) {
-                                    // Display success message
-                                    attron(COLOR_PAIR(3));
-                                    mvprintw(5, 2, "Game %s returned successfully.", return_id.c_str());
-                                    attroff(COLOR_PAIR(3));
-                                    refresh();
-                                    
-                                    // Clear input for next time
-                                    return_id.clear();
-                                    
-                                    // Return to main menu after delay
-                                    std::this_thread::sleep_for(std::chrono::seconds(2));
-                                    current_state = TUIState::MAIN_MENU;
-                                    highlighted_item = 0;
-                                } else {
-                                    // Display error message
-                                    attron(COLOR_PAIR(4));
-                                    mvprintw(5, 2, "Error: Game ID must be a number.");
-                                    attroff(COLOR_PAIR(4));
-                                    refresh();
-                                    std::this_thread::sleep_for(std::chrono::seconds(2));
-                                }
-                            }
-                            break;
-                        case KEY_BACKSPACE:
-                        case 127:
-                            // Handle backspace
-                            if (!return_id.empty()) {
-                                return_id.pop_back();
-                            }
-                            break;
-                        case 'b':
-                        case 'B':
-                            // Return to main menu
-                            return_id.clear();
-                            current_state = TUIState::MAIN_MENU;
-                            highlighted_item = 0;
-                            break;
-                        default:
-                            // Add character to input
-                            if (ch >= 32 && ch <= 126) {  // Printable ASCII
-                                // Only allow digits for game ID
-                                if (std::isdigit(ch) && return_id.length() < 5) {
-                                    return_id += ch;
-                                }
-                            }
-                            break;
-                    }
-                }
-                break;
-                
-            case TUIState::HISTORY_VIEW:
-                draw_history_view();
-                
-                // Get input
-                ch = getch();
-                switch (ch) {
-                    case 'b':
-                    case 'B':
-                        // Return to main menu
-                        current_state = TUIState::MAIN_MENU;
-                        highlighted_item = 0;
-                        break;
-                }
-                break;
-                
-            // Default case already implemented
-            default:
-                // For now, pressing any key returns to main menu
-                mvprintw(LINES/2, COLS/2 - 15, "Feature not yet implemented");
-                mvprintw(LINES/2 + 1, COLS/2 - 15, "Press any key to return to main menu");
-                refresh();
-                getch();
-                current_state = TUIState::MAIN_MENU;
-                break;
-        }
+    // Connect to the server
+    if (!connect_to_server(server_ip, server_port)) {
+        endwin();
+        std::cerr << "Failed to connect to server at " << server_ip << ":" << server_port << std::endl;
+        cleanup_openssl();
+        return 1;
     }
     
-    // Cleanup
-    cleanup_ncurses();
+    // Show main menu
+    main_menu();
     
-    if (!skip_connection) {
-        if (ssl) SSL_shutdown(ssl);
-        if (ssl) SSL_free(ssl);
-        if (ctx) SSL_CTX_free(ctx);
-        if (sockfd >= 0) close(sockfd);
-    }
+    // Clean up and exit
+    cleanup_connection();
+    cleanup_openssl();
+    endwin();
     
     return 0;
 } 
