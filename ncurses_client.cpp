@@ -1218,44 +1218,71 @@ void command_interface() {
                 // Show search query
                 mvprintw(6, 4, "Search Query: %s", search_query.c_str());
                 
-                // Create a content area for search results
-                WINDOW* results_win = newwin(height - 12, width - 8, 8, 4);
-                box(results_win, 0, 0);
+                // Split the screen: left side for raw response, right side for selectable list
+                int left_width = width * 0.65;
                 
-                // Display search results as a selectable list
+                // Left side - Raw server response
+                WINDOW* raw_win = newwin(height - 12, left_width, 8, 4);
+                box(raw_win, 0, 0);
+                wattron(raw_win, A_BOLD);
+                mvwprintw(raw_win, 0, 2, " Server Response ");
+                wattroff(raw_win, A_BOLD);
+                
+                // Display raw response
+                int line = 1;
+                std::istringstream iss_raw(response_text);
+                std::string raw_line;
+                while (std::getline(iss_raw, raw_line) && line < height - 14) {
+                    mvwprintw(raw_win, line++, 2, "%s", raw_line.c_str());
+                }
+                wrefresh(raw_win);
+                
+                // Right side - Selectable game list (if any games were parsed)
                 if (!game_list.empty()) {
-                    int start_idx = (list_selection / (height - 16)) * (height - 16);
-                    int end_idx = std::min(start_idx + (height - 16), (int)game_list.size());
+                    WINDOW* list_win = newwin(height - 12, width - left_width - 8, 8, 4 + left_width);
+                    box(list_win, 0, 0);
+                    wattron(list_win, A_BOLD);
+                    mvwprintw(list_win, 0, 2, " Game List ");
+                    wattroff(list_win, A_BOLD);
+                    
+                    // Calculate visible items and scrolling
+                    int max_visible = height - 14;
+                    int start_idx = (list_selection / max_visible) * max_visible;
+                    int end_idx = std::min(start_idx + max_visible, (int)game_list.size());
                     
                     for (int i = start_idx; i < end_idx; i++) {
                         // Highlight current selection
                         if (i == list_selection) {
-                            wattron(results_win, A_REVERSE);
+                            wattron(list_win, A_REVERSE);
                             if (has_colors()) {
-                                wattron(results_win, COLOR_PAIR(2)); // Green highlight
+                                wattron(list_win, COLOR_PAIR(2)); // Green highlight
                             }
                         }
                         
-                        mvwprintw(results_win, i - start_idx + 1, 2, "%s", game_list[i].c_str());
+                        // Truncate if needed to fit in window
+                        std::string game_name = game_list[i];
+                        if (game_name.length() > (unsigned)(width - left_width - 12)) {
+                            game_name = game_name.substr(0, width - left_width - 15) + "...";
+                        }
+                        
+                        mvwprintw(list_win, i - start_idx + 1, 2, "%s", game_name.c_str());
                         
                         if (i == list_selection) {
-                            wattroff(results_win, A_REVERSE);
+                            wattroff(list_win, A_REVERSE);
                             if (has_colors()) {
-                                wattroff(results_win, COLOR_PAIR(2));
+                                wattroff(list_win, COLOR_PAIR(2));
                             }
                         }
                     }
-                } else {
-                    mvwprintw(results_win, 1, 2, "No games found matching your search.");
+                    wrefresh(list_win);
+                    delwin(list_win);
                 }
-                
-                wrefresh(results_win);
                 
                 // Instructions
                 mvprintw(height - 3, 2, "Use UP/DOWN to navigate, ENTER to view details, ESC to go back");
                 
                 // Clean up
-                delwin(results_win);
+                delwin(raw_win);
                 break;
             }
                 
@@ -1273,16 +1300,57 @@ void command_interface() {
                 }
                 attroff(A_BOLD);
                 
-                // Create a content area for results
+                // Create a content area for results with a title
                 WINDOW* results_win = newwin(height - 10, width - 8, 7, 4);
                 box(results_win, 0, 0);
                 
-                // Display results
+                // Add a title to the window
+                wattron(results_win, A_BOLD);
+                mvwprintw(results_win, 0, 2, " Server Response ");
+                wattroff(results_win, A_BOLD);
+                
+                // Display results with better formatting
                 int line = 1;
                 std::istringstream iss(response_text);
                 std::string resp_line;
+                
+                // Skip the first line if it's just a status code
+                if (std::getline(iss, resp_line) && resp_line.length() >= 3 && 
+                    isdigit(resp_line[0]) && isdigit(resp_line[1]) && isdigit(resp_line[2])) {
+                    // Display it with some formatting
+                    wattron(results_win, A_BOLD);
+                    if (has_colors()) {
+                        wattron(results_win, COLOR_PAIR(2)); // Green for status
+                    }
+                    mvwprintw(results_win, line++, 2, "Status: %s", resp_line.c_str());
+                    if (has_colors()) {
+                        wattroff(results_win, COLOR_PAIR(2));
+                    }
+                    wattroff(results_win, A_BOLD);
+                    
+                    // Add a blank line for separation
+                    line++;
+                } else {
+                    // If we didn't find a status code, reset and show everything
+                    iss.clear();
+                    iss.seekg(0, std::ios::beg);
+                }
+                
+                // Display the rest of the content
                 while (std::getline(iss, resp_line) && line < height - 12) {
-                    mvwprintw(results_win, line++, 2, "%s", resp_line.c_str());
+                    // Add bullet points to entries that look like data
+                    if (!resp_line.empty() && resp_line[0] != '-' && 
+                        resp_line[0] != '2' && resp_line.find(':') == std::string::npos) {
+                        if (has_colors()) {
+                            wattron(results_win, COLOR_PAIR(4)); // Yellow for items
+                        }
+                        mvwprintw(results_win, line++, 2, "• %s", resp_line.c_str());
+                        if (has_colors()) {
+                            wattroff(results_win, COLOR_PAIR(4));
+                        }
+                    } else {
+                        mvwprintw(results_win, line++, 2, "%s", resp_line.c_str());
+                    }
                 }
                 
                 wrefresh(results_win);
@@ -1376,12 +1444,18 @@ void command_interface() {
                                     // Execute search and parse results
                                     std::string results = send_command_and_get_response("SEARCH " + search_query);
                                     
+                                    // Store full response for display
+                                    response_text = results;
+                                    
                                     // Parse results into game list
                                     game_list.clear();
                                     std::istringstream iss(results);
                                     std::string result_line;
                                     while (std::getline(iss, result_line)) {
-                                        if (!result_line.empty() && result_line[0] != '-') {
+                                        // Add any non-empty line that looks like a game title
+                                        if (!result_line.empty() && 
+                                            result_line[0] != '-' && result_line[0] != '2' && 
+                                            result_line.find(':') == std::string::npos) {
                                             game_list.push_back(result_line);
                                         }
                                     }
@@ -1433,21 +1507,26 @@ void command_interface() {
                                     // Get game list and display as selectable list
                                     std::string results = send_command_and_get_response("LIST");
                                     
-                                    // Parse results into game list
+                                    // Simplified parsing - keep raw results to visualize output
+                                    response_text = results;
+                                    
+                                    // Also parse into game list for selection
                                     game_list.clear();
                                     std::istringstream iss(results);
                                     std::string result_line;
                                     while (std::getline(iss, result_line)) {
-                                        if (!result_line.empty() && result_line[0] != '-') {
+                                        // Add any non-empty line that looks like a game title
+                                        if (!result_line.empty() && !result_line.empty() && 
+                                            result_line[0] != '-' && result_line[0] != '2' && 
+                                            result_line.find(':') == std::string::npos) {
                                             game_list.push_back(result_line);
                                         }
                                     }
                                     
-                                    if (!game_list.empty()) {
-                                        list_selection = 0;
-                                        current_level = SEARCH_RESULTS;
-                                        search_query = "All Games";
-                                    }
+                                    // Show results screen even if parsing didn't identify games
+                                    list_selection = 0;
+                                    current_level = SEARCH_RESULTS;
+                                    search_query = "All Games";
                                     break;
                             }
                         }
@@ -1482,21 +1561,26 @@ void command_interface() {
                                     // Get list of available games first
                                     std::string results = send_command_and_get_response("LIST");
                                     
+                                    // Store raw response for display
+                                    response_text = results;
+                                    
                                     // Parse results into game list
                                     game_list.clear();
                                     std::istringstream iss(results);
                                     std::string result_line;
                                     while (std::getline(iss, result_line)) {
-                                        if (!result_line.empty() && result_line[0] != '-') {
+                                        // Add any non-empty line that looks like a game title
+                                        if (!result_line.empty() && 
+                                            result_line[0] != '-' && result_line[0] != '2' && 
+                                            result_line.find(':') == std::string::npos) {
                                             game_list.push_back(result_line);
                                         }
                                     }
                                     
-                                    if (!game_list.empty()) {
-                                        list_selection = 0;
-                                        current_level = SEARCH_RESULTS;
-                                        search_query = "Available Games";
-                                    }
+                                    // Show results even if no games were parsed
+                                    list_selection = 0;
+                                    current_level = SEARCH_RESULTS;
+                                    search_query = "Available Games";
                                     break;
                             }
                         }
