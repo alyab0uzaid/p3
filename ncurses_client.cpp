@@ -38,8 +38,8 @@ bool connect_to_server(const std::string& server_ip, const std::string& server_p
 void cleanup_connection();
 std::string send_command_and_get_response(const std::string& command);
 void display_message_box(const std::string& message);
-bool login_form();
-void signup_form();
+bool username_form();
+bool password_form(const std::string& username, bool is_new_user);
 void command_interface();
 
 // Initialize OpenSSL
@@ -232,8 +232,8 @@ void display_message_box(const std::string& message) {
     refresh();
 }
 
-// Signup form
-void signup_form() {
+// Username form - first screen for all users
+bool username_form() {
     clear();
     
     // Create a border and title
@@ -245,24 +245,18 @@ void signup_form() {
     attron(A_BOLD | A_UNDERLINE);
     mvprintw(2, (width - 20) / 2, "Game Rental System");
     attroff(A_BOLD | A_UNDERLINE);
-    mvprintw(4, (width - 15) / 2, "Registration Form");
+    mvprintw(4, (width - 30) / 2, "Enter Your Username");
     
-    FIELD *fields[4];
+    FIELD *fields[2];
     FORM *form;
     int ch;
     
     // Initialize fields
     fields[0] = new_field(1, 30, 8, (width - 30) / 2, 0, 0);
-    fields[1] = new_field(1, 30, 10, (width - 30) / 2, 0, 0);
-    fields[2] = new_field(1, 30, 12, (width - 30) / 2, 0, 0);
-    fields[3] = NULL;
+    fields[1] = NULL;
     
     // Set field options
     set_field_back(fields[0], A_UNDERLINE);
-    set_field_back(fields[1], A_UNDERLINE);
-    set_field_back(fields[2], A_UNDERLINE);
-    field_opts_off(fields[1], O_PUBLIC); // Password field - don't show
-    field_opts_off(fields[2], O_PUBLIC); // Confirm password field - don't show
     
     // Create the form
     form = new_form(fields);
@@ -271,138 +265,15 @@ void signup_form() {
     post_form(form);
     
     // Labels
-    mvprintw(8, (width - 30) / 2 - 18, "New Username:");
-    mvprintw(10, (width - 30) / 2 - 18, "New Password:");
-    mvprintw(12, (width - 30) / 2 - 18, "Confirm Password:");
-    mvprintw(height - 4, 2, "Press F1 or Enter to submit");
-    mvprintw(height - 3, 2, "Press F2 to cancel and return to login");
+    mvprintw(8, (width - 30) / 2 - 12, "Username:");
+    mvprintw(height - 4, 2, "Press F1 or Enter to continue");
+    mvprintw(height - 3, 2, "Press F10 to exit");
     refresh();
     
     // Form navigation
-    bool done = false;
-    while(!done) {
-        ch = getch();
-        
-        if (ch == KEY_F(1) || ch == 10) { // F1 or Enter key
-            // Process the form
-            form_driver(form, REQ_VALIDATION);
-            
-            // Get field values
-            char* username = field_buffer(fields[0], 0);
-            char* password = field_buffer(fields[1], 0);
-            char* confirm = field_buffer(fields[2], 0);
-            
-            // Trim whitespace
-            std::string username_str(username);
-            std::string password_str(password);
-            std::string confirm_str(confirm);
-            username_str.erase(username_str.find_last_not_of(" \n\r\t") + 1);
-            password_str.erase(password_str.find_last_not_of(" \n\r\t") + 1);
-            confirm_str.erase(confirm_str.find_last_not_of(" \n\r\t") + 1);
-            
-            // Check if passwords match
-            if (password_str != confirm_str) {
-                display_message_box("Passwords do not match. Please try again.");
-                continue; // Go back to form input
-            }
-            
-            // Send signup command
-            std::string signup_response = send_command_and_get_response("NEWUSER " + username_str);
-            
-            if (signup_response.find("230") != std::string::npos) {
-                display_message_box("Account created successfully! Please login with your new credentials.");
-            } else {
-                display_message_box("Account creation failed: " + signup_response);
-            }
-            
-            // Free form resources
-            unpost_form(form);
-            free_form(form);
-            free_field(fields[0]);
-            free_field(fields[1]);
-            free_field(fields[2]);
-            done = true;
-        }
-        else if (ch == KEY_F(2)) {
-            // Free form resources
-            unpost_form(form);
-            free_form(form);
-            free_field(fields[0]);
-            free_field(fields[1]);
-            free_field(fields[2]);
-            done = true;
-        }
-        else {
-            // Handle normal form navigation
-            switch(ch) {
-                case KEY_DOWN:
-                    form_driver(form, REQ_NEXT_FIELD);
-                    form_driver(form, REQ_END_LINE);
-                    break;
-                case KEY_UP:
-                    form_driver(form, REQ_PREV_FIELD);
-                    form_driver(form, REQ_END_LINE);
-                    break;
-                case KEY_BACKSPACE:
-                case 127:
-                    form_driver(form, REQ_DEL_PREV);
-                    break;
-                default:
-                    form_driver(form, ch);
-                    break;
-            }
-        }
-    }
-}
-
-// Login form
-bool login_form() {
-    clear();
-    
-    // Create a border and title
-    int height, width;
-    getmaxyx(stdscr, height, width);
-    box(stdscr, 0, 0);
-    
-    // Title
-    attron(A_BOLD | A_UNDERLINE);
-    mvprintw(2, (width - 20) / 2, "Game Rental System");
-    attroff(A_BOLD | A_UNDERLINE);
-    mvprintw(4, (width - 10) / 2, "Login Form");
-    
-    FIELD *fields[3];
-    FORM *form;
-    int ch;
-    
-    // Initialize fields
-    fields[0] = new_field(1, 30, 8, (width - 30) / 2, 0, 0);
-    fields[1] = new_field(1, 30, 10, (width - 30) / 2, 0, 0);
-    fields[2] = NULL;
-    
-    // Set field options
-    set_field_back(fields[0], A_UNDERLINE);
-    set_field_back(fields[1], A_UNDERLINE);
-    field_opts_off(fields[1], O_PUBLIC); // Password field - don't show
-    
-    // Create the form
-    form = new_form(fields);
-    
-    // Post the form
-    post_form(form);
-    
-    // Labels
-    mvprintw(8, (width - 30) / 2 - 10, "Username:");
-    mvprintw(10, (width - 30) / 2 - 10, "Password:");
-    mvprintw(height - 4, 2, "Press F1 or Enter to submit");
-    mvprintw(height - 3, 2, "Press F2 to go to signup form");
-    mvprintw(height - 2, 2, "Press F10 to exit");
-    refresh();
-    
-    // Form navigation
-    bool done = false;
     bool result = false;
     
-    while(!done) {
+    while(true) {
         ch = getch();
         
         if (ch == KEY_F(10)) {
@@ -410,86 +281,245 @@ bool login_form() {
             unpost_form(form);
             free_form(form);
             free_field(fields[0]);
-            free_field(fields[1]);
-            return false;
-        }
-        else if (ch == KEY_F(2)) {
-            // Free form resources
-            unpost_form(form);
-            free_form(form);
-            free_field(fields[0]);
-            free_field(fields[1]);
-            
-            // Go to signup form
-            signup_form();
-            
-            // Return to login form
             return false;
         }
         else if (ch == KEY_F(1) || ch == 10) { // F1 or Enter key
             // Process form submission
             form_driver(form, REQ_VALIDATION);
             
-            // Get field values
+            // Get username value
             char* username = field_buffer(fields[0], 0);
-            char* password = field_buffer(fields[1], 0);
             
             // Trim whitespace
             std::string username_str(username);
-            std::string password_str(password);
             username_str.erase(username_str.find_last_not_of(" \n\r\t") + 1);
-            password_str.erase(password_str.find_last_not_of(" \n\r\t") + 1);
             
-            // Send login commands
-            std::string user_response = send_command_and_get_response("USER " + username_str);
-            
-            // Check if user exists
-            if (user_response.find("430") != std::string::npos) {
-                // User doesn't exist
-                display_message_box("User not found. Would you like to sign up?");
-                
-                // Free form resources
-                unpost_form(form);
-                free_form(form);
-                free_field(fields[0]);
-                free_field(fields[1]);
-                
-                // Go to signup form
-                signup_form();
-                
-                // Return to login form
-                return false;
+            if (username_str.empty()) {
+                display_message_box("Username cannot be empty. Please enter a username.");
+                continue;
             }
             
-            std::string pass_response = send_command_and_get_response("PASS " + password_str);
+            // Send USER command to check if user exists
+            std::string user_response = send_command_and_get_response("USER " + username_str);
             
-            // Check if login was successful
-            if (pass_response.find("230") != std::string::npos) {
-                is_authenticated = true;
-                current_user = username_str;
+            // Free form resources
+            unpost_form(form);
+            free_form(form);
+            free_field(fields[0]);
+            
+            // Check if user exists
+            bool is_new_user = (user_response.find("430") != std::string::npos);
+            
+            // Show password form
+            result = password_form(username_str, is_new_user);
+            return result;
+        }
+        else {
+            // Handle normal form navigation
+            switch(ch) {
+                case KEY_BACKSPACE:
+                case 127:
+                    form_driver(form, REQ_DEL_PREV);
+                    break;
+                default:
+                    form_driver(form, ch);
+                    break;
+            }
+        }
+    }
+    
+    return result;
+}
+
+// Password form - second screen (handles both new and existing users)
+bool password_form(const std::string& username, bool is_new_user) {
+    clear();
+    
+    // Create a border and title
+    int height, width;
+    getmaxyx(stdscr, height, width);
+    box(stdscr, 0, 0);
+    
+    // Title
+    attron(A_BOLD | A_UNDERLINE);
+    mvprintw(2, (width - 20) / 2, "Game Rental System");
+    attroff(A_BOLD | A_UNDERLINE);
+    
+    if (is_new_user) {
+        attron(A_BOLD);
+        mvprintw(4, (width - 40) / 2, "Create New Account for '%s'", username.c_str());
+        attroff(A_BOLD);
+    } else {
+        attron(A_BOLD);
+        mvprintw(4, (width - 30) / 2, "Welcome Back, %s", username.c_str());
+        attroff(A_BOLD);
+    }
+    
+    FIELD *fields[3];
+    FORM *form;
+    int ch;
+    
+    // Initialize fields
+    if (is_new_user) {
+        // New user needs password and confirm password
+        fields[0] = new_field(1, 30, 8, (width - 30) / 2, 0, 0);
+        fields[1] = new_field(1, 30, 10, (width - 30) / 2, 0, 0);
+        fields[2] = NULL;
+        
+        // Set field options
+        set_field_back(fields[0], A_UNDERLINE);
+        set_field_back(fields[1], A_UNDERLINE);
+        field_opts_off(fields[0], O_PUBLIC); // Password field - don't show
+        field_opts_off(fields[1], O_PUBLIC); // Confirm password field - don't show
+    } else {
+        // Existing user just needs password
+        fields[0] = new_field(1, 30, 8, (width - 30) / 2, 0, 0);
+        fields[1] = NULL;
+        
+        // Set field options
+        set_field_back(fields[0], A_UNDERLINE);
+        field_opts_off(fields[0], O_PUBLIC); // Password field - don't show
+    }
+    
+    // Create the form
+    form = new_form(fields);
+    
+    // Post the form
+    post_form(form);
+    
+    // Labels
+    if (is_new_user) {
+        mvprintw(8, (width - 30) / 2 - 15, "New Password:");
+        mvprintw(10, (width - 30) / 2 - 15, "Confirm Password:");
+    } else {
+        mvprintw(8, (width - 30) / 2 - 15, "Password:");
+    }
+    
+    mvprintw(height - 4, 2, "Press F1 or Enter to submit");
+    mvprintw(height - 3, 2, "Press F2 to go back");
+    refresh();
+    
+    // Form navigation
+    bool result = false;
+    
+    while(true) {
+        ch = getch();
+        
+        if (ch == KEY_F(2)) {
+            // Go back to username form
+            if (is_new_user) {
+                unpost_form(form);
+                free_form(form);
+                free_field(fields[0]);
+                free_field(fields[1]);
+            } else {
+                unpost_form(form);
+                free_form(form);
+                free_field(fields[0]);
+            }
+            return false;
+        }
+        else if (ch == KEY_F(1) || ch == 10) { // F1 or Enter key
+            // Process form submission
+            form_driver(form, REQ_VALIDATION);
+            
+            if (is_new_user) {
+                // Handle new user registration
+                char* password = field_buffer(fields[0], 0);
+                char* confirm = field_buffer(fields[1], 0);
+                
+                // Trim whitespace
+                std::string password_str(password);
+                std::string confirm_str(confirm);
+                password_str.erase(password_str.find_last_not_of(" \n\r\t") + 1);
+                confirm_str.erase(confirm_str.find_last_not_of(" \n\r\t") + 1);
+                
+                // Check if passwords match
+                if (password_str != confirm_str) {
+                    display_message_box("Passwords do not match. Please try again.");
+                    continue;
+                }
+                
+                // Send NEWUSER command to create account
+                std::string newuser_response = send_command_and_get_response("NEWUSER " + username);
+                
+                // Check if account creation was successful
+                if (newuser_response.find("230") == std::string::npos) {
+                    display_message_box("Failed to create account: " + newuser_response);
+                    
+                    // Free form resources
+                    unpost_form(form);
+                    free_form(form);
+                    free_field(fields[0]);
+                    free_field(fields[1]);
+                    return false;
+                }
+                
+                // Send USER command again
+                std::string user_response = send_command_and_get_response("USER " + username);
+                
+                // Send PASS command with new password
+                std::string pass_response = send_command_and_get_response("PASS " + password_str);
+                
+                // Check if login was successful
+                if (pass_response.find("230") != std::string::npos) {
+                    display_message_box("Account created and logged in successfully!");
+                    is_authenticated = true;
+                    current_user = username;
+                    result = true;
+                } else {
+                    display_message_box("Account created but login failed: " + pass_response);
+                    result = false;
+                }
                 
                 // Free form resources
                 unpost_form(form);
                 free_form(form);
                 free_field(fields[0]);
                 free_field(fields[1]);
-                
-                // Login successful
-                return true;
+                return result;
             } else {
-                display_message_box("Login failed: " + pass_response);
+                // Handle existing user login
+                char* password = field_buffer(fields[0], 0);
+                
+                // Trim whitespace
+                std::string password_str(password);
+                password_str.erase(password_str.find_last_not_of(" \n\r\t") + 1);
+                
+                // Send PASS command with password
+                std::string pass_response = send_command_and_get_response("PASS " + password_str);
+                
+                // Check if login was successful
+                if (pass_response.find("230") != std::string::npos) {
+                    is_authenticated = true;
+                    current_user = username;
+                    result = true;
+                } else {
+                    display_message_box("Login failed: " + pass_response);
+                    result = false;
+                }
+                
+                // Free form resources
+                unpost_form(form);
+                free_form(form);
+                free_field(fields[0]);
+                return result;
             }
         }
         else {
             // Handle normal form navigation
             switch(ch) {
                 case KEY_DOWN:
-                    form_driver(form, REQ_NEXT_FIELD);
-                    form_driver(form, REQ_END_LINE);
+                    if (is_new_user) { // Only allow field navigation for new users with multiple fields
+                        form_driver(form, REQ_NEXT_FIELD);
+                        form_driver(form, REQ_END_LINE);
+                    }
                     break;
                 case KEY_UP:
-                    form_driver(form, REQ_PREV_FIELD);
-                    form_driver(form, REQ_END_LINE);
+                    if (is_new_user) { // Only allow field navigation for new users with multiple fields
+                        form_driver(form, REQ_PREV_FIELD);
+                        form_driver(form, REQ_END_LINE);
+                    }
                     break;
                 case KEY_BACKSPACE:
                 case 127:
@@ -502,13 +532,7 @@ bool login_form() {
         }
     }
     
-    // If we get here and the form is still active, free it
-    unpost_form(form);
-    free_form(form);
-    free_field(fields[0]);
-    free_field(fields[1]);
-    
-    return result;  // Return whether login was successful
+    return result;
 }
 
 // Command interface - improved visual appearance
@@ -718,18 +742,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Show login form directly (instead of main menu)
+    // Show username form first
+    bool login_success = username_form();
+    
     // If login is successful, show command interface
-    bool login_success = false;
-    
-    while (!login_success) {
-        login_success = login_form();
-        if (!login_success && !is_connected) {
-            // User chose to exit
-            break;
-        }
-    }
-    
     if (login_success) {
         command_interface();
     }
