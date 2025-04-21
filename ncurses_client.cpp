@@ -308,6 +308,11 @@ bool username_form() {
     mvwprintw(input_win, 1, 1, "Enter username...");
     wattroff(input_win, A_DIM);
     
+    // Error message will be displayed below the input box - init with empty space
+    attron(COLOR_PAIR(3)); // Red text for error
+    mvprintw((height - form_height) / 2 + 11, (width - 50) / 2, "                                                  ");
+    attroff(COLOR_PAIR(3));
+    
     // Instructions at the bottom
     mvwprintw(form_win, form_height - 2, (form_width - 36) / 2, "Press ENTER to continue or ESC to exit");
     
@@ -351,15 +356,15 @@ bool username_form() {
             }
             
             if (username_str.empty()) {
-                // Show error in red in the form window
+                // Show error in red below the input box
                 if (has_colors()) {
-                    wattron(form_win, COLOR_PAIR(3)); // Red text for error
+                    attron(COLOR_PAIR(3)); // Red text for error
                 }
-                mvwprintw(form_win, 10, (form_width - 45) / 2, "Username cannot be empty. Please enter a username.");
+                mvprintw((height - form_height) / 2 + 11, (width - 45) / 2, "Username cannot be empty. Please enter a username.");
                 if (has_colors()) {
-                    wattroff(form_win, COLOR_PAIR(3));
+                    attroff(COLOR_PAIR(3));
                 }
-                wrefresh(form_win);
+                refresh(); // Use main screen refresh
                 
                 // Show placeholder again
                 werase(input_win);
@@ -377,9 +382,9 @@ bool username_form() {
                 continue;
             }
             
-            // Show checking message in the form window
-            mvwprintw(form_win, 10, (form_width - 20) / 2, "Checking username...");
-            wrefresh(form_win);
+            // Show checking message below the input box
+            mvprintw((height - form_height) / 2 + 11, (width - 20) / 2, "Checking username...");
+            refresh(); // Use main screen refresh
             
             // Send USER command to check if user exists
             std::string user_response = send_command_and_get_response("USER " + username_str);
@@ -532,6 +537,11 @@ bool password_form(const std::string& username, bool is_new_user) {
     mvwprintw(pass_win, 1, 1, "Enter password...");
     wattroff(pass_win, A_DIM);
     
+    // Error message will be displayed below the input box - init with empty space
+    attron(COLOR_PAIR(3)); // Red text for error
+    mvprintw((height - form_height) / 2 + 11, (width - 50) / 2, "                                                  ");
+    attroff(COLOR_PAIR(3));
+    
     // If it's a new user, create a confirmation window too
     WINDOW* confirm_win = nullptr;
     if (is_new_user) {
@@ -547,6 +557,11 @@ bool password_form(const std::string& username, bool is_new_user) {
         wattron(confirm_win, A_DIM);
         mvwprintw(confirm_win, 1, 1, "Confirm password...");
         wattroff(confirm_win, A_DIM);
+        
+        // Error message for new users will be displayed below the confirmation box
+        attron(COLOR_PAIR(3));
+        mvprintw((height - form_height) / 2 + 15, (width - 50) / 2, "                                                  ");
+        attroff(COLOR_PAIR(3));
     }
     
     // Instructions at the bottom - centered
@@ -594,15 +609,15 @@ bool password_form(const std::string& username, bool is_new_user) {
             password[pos] = '\0'; // Ensure null termination
             
             if (pos == 0) {
-                // Empty password - show error in red
+                // Empty password - show error in red below the input box
                 if (has_colors()) {
-                    wattron(form_win, COLOR_PAIR(3)); // Red text for error
+                    attron(COLOR_PAIR(3)); // Red text for error
                 }
-                mvwprintw(form_win, 10, (form_width - 47) / 2, "Password cannot be empty. Please enter a password.");
+                mvprintw((height - form_height) / 2 + 11, (width - 47) / 2, "Password cannot be empty. Please enter a password.");
                 if (has_colors()) {
-                    wattroff(form_win, COLOR_PAIR(3));
+                    attroff(COLOR_PAIR(3));
                 }
-                wrefresh(form_win);
+                refresh(); // Use main screen refresh
                 
                 // Show placeholder again
                 werase(pass_win);
@@ -626,8 +641,10 @@ bool password_form(const std::string& username, bool is_new_user) {
                 bool confirm_first_keypress = true;
                 
                 // Clear any previous error message
-                mvwprintw(form_win, 10, 2, "                                                      ");
-                wrefresh(form_win);
+                attron(COLOR_PAIR(3));
+                mvprintw((height - form_height) / 2 + 15, (width - 50) / 2, "                                                  ");
+                attroff(COLOR_PAIR(3));
+                refresh();
                 
                 // Move to confirmation field
                 wmove(confirm_win, 1, 1);
@@ -694,15 +711,15 @@ bool password_form(const std::string& username, bool is_new_user) {
                 
                 // Check if passwords match
                 if (strcmp(password, confirm) != 0) {
-                    // Show error in red
+                    // Show error in red below the confirmation box
                     if (has_colors()) {
-                        wattron(form_win, COLOR_PAIR(3)); // Red text for error
+                        attron(COLOR_PAIR(3)); // Red text for error
                     }
-                    mvwprintw(form_win, 10, (form_width - 40) / 2, "Passwords do not match. Please try again.");
+                    mvprintw((height - form_height) / 2 + 15, (width - 40) / 2, "Passwords do not match. Please try again.");
                     if (has_colors()) {
-                        wattroff(form_win, COLOR_PAIR(3));
+                        attroff(COLOR_PAIR(3));
                     }
-                    wrefresh(form_win);
+                    refresh(); // Use main screen refresh
                     
                     // Clear password fields and reset placeholders
                     werase(pass_win);
