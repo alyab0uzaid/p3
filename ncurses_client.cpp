@@ -31,9 +31,11 @@ SSL* ssl = nullptr;
 SSL_CTX* ctx = nullptr;
 bool is_connected = false;
 bool is_authenticated = false;
-std::string current_user;
+std::string current_user = "";
 
 // Forward declarations
+bool create_account(const std::string& username, const std::string& password);
+bool login(const std::string& username, const std::string& password);
 bool connect_to_server(const std::string& server_ip, const std::string& server_port);
 void cleanup_connection();
 std::string send_command_and_get_response(const std::string& command);
@@ -519,7 +521,6 @@ bool password_form(const std::string& username, bool is_new_user) {
         
         // Instructions with more details for new users
         mvwprintw(form_win, 5, (form_width - 43) / 2, "Please choose a password for your new account");
-        mvwprintw(form_win, 6, (form_width - 40) / 2, "(You'll need to enter it twice for verification)");
     } else {
         mvwprintw(form_win, 2, (form_width - 10) / 2, "USER LOGIN");
         mvwprintw(form_win, 3, (form_width - 42) / 2, "Welcome back, %s! Please enter your password.", username.c_str());
@@ -540,39 +541,10 @@ bool password_form(const std::string& username, bool is_new_user) {
     mvwprintw(pass_win, 1, 1, "Enter password...");
     wattroff(pass_win, A_DIM);
     
-    // Error message will be displayed below the input box - init with empty space
+    // Error messages will be displayed below the input box
     attron(COLOR_PAIR(3)); // Red text for error
     mvprintw((height - form_height) / 2 + 11, (width - 50) / 2, "                                                  ");
     attroff(COLOR_PAIR(3));
-    
-    // If it's a new user, create a confirmation window too
-    WINDOW* confirm_win = nullptr;
-    if (is_new_user) {
-        // Use a separate form height for new users that need confirmation
-        form_height = 18;
-        
-        confirm_win = newwin(3, 40, (height - form_height) / 2 + 12, (width - 40) / 2);
-        set_border_color(confirm_win);
-        box(confirm_win, 0, 0);
-        unset_border_color(confirm_win);
-        
-        // Redraw confirmation field and ensure it's empty
-        werase(confirm_win);  // Clear any existing content
-        set_border_color(confirm_win);
-        box(confirm_win, 0, 0);
-        unset_border_color(confirm_win);
-        
-        // Add placeholder text
-        wattron(confirm_win, A_DIM);
-        mvwprintw(confirm_win, 1, 1, "Confirm password...");
-        wattroff(confirm_win, A_DIM);
-        wrefresh(confirm_win);
-        
-        // Error message for new users will be displayed below the confirmation box
-        attron(COLOR_PAIR(3));
-        mvprintw((height - form_height) / 2 + 15, (width - 50) / 2, "                                                  ");
-        attroff(COLOR_PAIR(3));
-    }
     
     // Instructions at the bottom - centered
     if (is_new_user) {
@@ -584,13 +556,9 @@ bool password_form(const std::string& username, bool is_new_user) {
     // Refresh all windows
     wrefresh(form_win);
     wrefresh(pass_win);
-    if (is_new_user && confirm_win) {
-        wrefresh(confirm_win);
-    }
     
     // Direct input for password
     char password[31] = {0}; // 30 chars + null terminator
-    char confirm[31] = {0};  // For new users
     int pos = 0;
     int ch;
     
@@ -609,483 +577,68 @@ bool password_form(const std::string& username, bool is_new_user) {
         
         if (ch == 27) { // Escape key
             delwin(pass_win);
-            if (is_new_user && confirm_win) {
-                delwin(confirm_win);
-            }
             delwin(form_win);
             return false;
         }
-        else if (ch == 10) { // Enter key
-            password[pos] = '\0'; // Ensure null termination
-            
+        else if (ch == '\n' || ch == KEY_ENTER) {
+            // Handle empty password
             if (pos == 0) {
-                // Empty password - show error in red below the input box
-                if (has_colors()) {
-                    attron(COLOR_PAIR(3)); // Red text for error
-                }
-                mvprintw((height - form_height) / 2 + 11, (width - 47) / 2, "Password cannot be empty. Please enter a password.");
-                if (has_colors()) {
-                    attroff(COLOR_PAIR(3));
-                }
-                refresh(); // Use main screen refresh
-                
-                // Show placeholder again
-                werase(pass_win);
-                set_border_color(pass_win);
-                box(pass_win, 0, 0);
-                unset_border_color(pass_win);
-                wattron(pass_win, A_DIM);
-                mvwprintw(pass_win, 1, 1, "Enter password...");
-                wattroff(pass_win, A_DIM);
-                first_keypress = true;
-                
-                // Move cursor back to password field
-                wmove(pass_win, 1, 1);
-                wrefresh(pass_win);
+                attron(COLOR_PAIR(3)); // Red text for error
+                mvprintw((height - form_height) / 2 + 11, (width - 28) / 2, "Password cannot be empty!");
+                attroff(COLOR_PAIR(3));
+                refresh();
                 continue;
             }
             
+            // Password entered, proceed based on user type
             if (is_new_user) {
-                // Now get confirmation password
-                pos = 0;
-                bool confirm_first_keypress = true;
-                
-                // Reset and reinitialize terminal completely
-                endwin();
-                initscr();
-                cbreak();
-                noecho();
-                keypad(stdscr, TRUE);
-                
-                // Re-enable colors
-                if (has_colors()) {
-                    start_color();
-                    use_default_colors();  // This enables transparent background (-1)
-                    init_pair(1, COLOR_WHITE, COLOR_BLUE);     // For titles
-                    init_pair(2, COLOR_GREEN, -1);             // For success messages with transparent background
-                    init_pair(3, COLOR_RED, -1);               // For error messages with transparent background
-                    init_pair(4, COLOR_YELLOW, -1);            // For warnings/highlights with transparent background
-                    init_pair(5, 8, -1);                       // Grey for borders with transparent background
-                    
-                    // Set transparent background for the main screen
-                    set_transparent_background(stdscr);
-                }
-                
-                // Redraw everything
-                clear();
-                
-                // Redraw the main border
-                set_border_color(stdscr);
-                box(stdscr, 0, 0);
-                unset_border_color(stdscr);
-                
-                // Redraw the form and its content
-                set_border_color(form_win);
-                box(form_win, 0, 0);
-                unset_border_color(form_win);
-                
-                wattron(form_win, A_BOLD);
-                mvwprintw(form_win, 0, (form_width - 19) / 2, " GAME RENTAL SYSTEM ");
-                mvwprintw(form_win, 2, (form_width - 16) / 2, "CREATE NEW ACCOUNT");
-                mvwprintw(form_win, 3, (form_width - 45) / 2, "Welcome, %s! You're creating a new account.", username.c_str());
-                wattroff(form_win, A_BOLD);
-                
-                // Redraw instructions
-                mvwprintw(form_win, 5, (form_width - 43) / 2, "Please choose a password for your new account");
-                mvwprintw(form_win, 6, (form_width - 40) / 2, "(You'll need to enter it twice for verification)");
-                
-                // Redraw bottom instructions
-                mvwprintw(form_win, form_height - 2, (form_width - 43) / 2, "Press ENTER to create account or ESC to go back");
-                
-                wrefresh(form_win);
-                
-                // Redraw password field
-                set_border_color(pass_win);
-                box(pass_win, 0, 0);
-                unset_border_color(pass_win);
-                wrefresh(pass_win);
-                
-                // Redraw confirmation field
-                set_border_color(confirm_win);
-                box(confirm_win, 0, 0);
-                unset_border_color(confirm_win);
-                wrefresh(confirm_win);
-                
-                // Final global refresh
-                refresh();
-                
-                // Move cursor to confirmation field and ensure it's visible
-                curs_set(1);  // Make cursor visible
-                wmove(confirm_win, 1, 1);  // Move cursor to first position in confirm field
-                wrefresh(confirm_win);  // Update confirm window with cursor
-                napms(50);  // Short delay to allow terminal to update
-                wmove(confirm_win, 1, 1);  // Move cursor again to ensure positioning
-                wrefresh(confirm_win);  // Force another refresh
-                touchwin(confirm_win);  // Mark the entire window for redrawing
-                wrefresh(confirm_win);  // Final refresh
-                
-                // Input loop for confirm password
-                while (true) {
-                    ch = wgetch(confirm_win);
-                    
-                    if (ch == 27) { // Escape key
-                        delwin(pass_win);
-                        delwin(confirm_win);
-                        delwin(form_win);
-                        return false;
-                    }
-                    else if (ch == 10) { // Enter key
-                        confirm[pos] = '\0'; // Ensure null termination
-                        break;
-                    }
-                    else if (ch == KEY_BACKSPACE || ch == 127) { // Backspace
-                        if (pos > 0) {
-                            pos--;
-                            // Replace with space
-                            wmove(confirm_win, 1, 1 + pos);
-                            waddch(confirm_win, ' ');
-                            // Position cursor correctly
-                            wmove(confirm_win, 1, 1 + pos);
-                            wrefresh(confirm_win);
-                            
-                            // If we deleted all characters, show the placeholder again
-                            if (pos == 0) {
-                                werase(confirm_win);
-                                set_border_color(confirm_win);
-                                box(confirm_win, 0, 0);
-                                unset_border_color(confirm_win);
-                                wattron(confirm_win, A_DIM);
-                                mvwprintw(confirm_win, 1, 1, "Confirm password...");
-                                wattroff(confirm_win, A_DIM);
-                                confirm_first_keypress = true;
-                                wrefresh(confirm_win);
-                            }
-                        }
-                    }
-                    else if (pos < 38 && ch >= 32 && ch <= 126) { // Printable characters - increased limit for wider boxes
-                        // Clear the placeholder text on first keypress
-                        if (confirm_first_keypress) {
-                            werase(confirm_win);
-                            set_border_color(confirm_win);
-                            box(confirm_win, 0, 0);
-                            unset_border_color(confirm_win);
-                            confirm_first_keypress = false;
-                            wrefresh(confirm_win);
-                        }
-                        
-                        confirm[pos] = ch;
-                        // Show asterisk instead of character
-                        wmove(confirm_win, 1, 1 + pos);
-                        waddch(confirm_win, '*');
-                        pos++;
-                        wmove(confirm_win, 1, 1 + pos);
-                        wrefresh(confirm_win);
-                    }
-                }
-                
-                // Check if passwords match
-                if (strcmp(password, confirm) != 0) {
-                    // Show error in red below the confirmation box
-                    if (has_colors()) {
-                        attron(COLOR_PAIR(3)); // Red text for error
-                    }
-                    mvprintw((height - form_height) / 2 + 15, (width - 40) / 2, "Passwords do not match. Please try again.");
-                    if (has_colors()) {
-                        attroff(COLOR_PAIR(3));
-                    }
-                    refresh(); // Use main screen refresh
-                    
-                    // Clear password fields and reset placeholders
-                    werase(pass_win);
-                    set_border_color(pass_win);
-                    box(pass_win, 0, 0);
-                    unset_border_color(pass_win);
-                    wattron(pass_win, A_DIM);
-                    mvwprintw(pass_win, 1, 1, "Enter password...");
-                    wattroff(pass_win, A_DIM);
-                    first_keypress = true;
-                    wrefresh(pass_win);
-                    
-                    werase(confirm_win);
-                    set_border_color(confirm_win);
-                    box(confirm_win, 0, 0);
-                    unset_border_color(confirm_win);
-                    wattron(confirm_win, A_DIM);
-                    mvwprintw(confirm_win, 1, 1, "Confirm password...");
-                    wattroff(confirm_win, A_DIM);
-                    wrefresh(confirm_win);
-                    
-                    // Reset position and start over with password
-                    pos = 0;
-                    wmove(pass_win, 1, 1);
-                    wrefresh(pass_win);
-                    continue;
-                }
-                
-                // Show processing message in a centered box
-                // First clean up password input windows
-                delwin(pass_win);
-                delwin(confirm_win);
-                delwin(form_win);
-                
-                // Create new message box
-                WINDOW* msg_win = newwin(7, 40, (height - 7) / 2, (width - 40) / 2);
-                set_border_color(msg_win);
-                box(msg_win, 0, 0);
-                unset_border_color(msg_win);
-                
-                wattron(msg_win, A_BOLD);
-                mvwprintw(msg_win, 0, (40 - 14) / 2, " Processing ");
-                wattroff(msg_win, A_BOLD);
-                
-                mvwprintw(msg_win, 3, (40 - 25) / 2, "Creating your new account...");
-                wrefresh(msg_win);
-                
-                // For account creation, we just use USER and PASS
-                // The server detects new users automatically and handles it
-                
-                // Send USER command to initiate authentication
-                std::string user_cmd_response = send_command_and_get_response("USER " + username);
-                
-                // Check if the USER command was successful
-                if (user_cmd_response.find("331") == std::string::npos) {
-                    mvprintw(12, 10, "Failed to initiate account creation: %s", user_cmd_response.c_str());
-                    mvprintw(14, 10, "Press any key to continue...");
-                    refresh();
-                    getch();
-                    return false;
-                }
-                
-                // Send PASS command to set the password
-                std::string pass_response = send_command_and_get_response("PASS " + std::string(password));
-                
-                // Check if password was set successfully
-                if (pass_response.find("230") != std::string::npos) {
-                    // Clean up the message window
-                    delwin(msg_win);
-                    
-                    // Create a full-screen loading screen with animation
+                // For new users, proceed directly to account creation
+                std::string passwd_str(password);
+                if (create_account(username, passwd_str)) {
+                    // Successful account creation
                     clear();
                     refresh();
-                    
-                    // Show success message and loading animation
-                    attron(A_BOLD);
-                    if (has_colors()) {
-                        attron(COLOR_PAIR(2)); // Green for success
-                    }
-                    mvprintw(height/4, (width - 26) / 2, "ACCOUNT CREATED SUCCESSFULLY!");
-                    if (has_colors()) {
-                        attroff(COLOR_PAIR(2));
-                    }
-                    attroff(A_BOLD);
-                    
-                    mvprintw(height/4 + 2, (width - 32) / 2, "Welcome to the Game Rental System!");
-                    
-                    // First clear the screen completely to make sure messages are visible
-                    clear();
-                    refresh();
-                    
-                    // Draw a border
-                    box(stdscr, 0, 0);
-                    refresh();
-                    
-                    // Draw title at the top
-                    attron(A_BOLD);
-                    mvprintw(2, (width - 19) / 2, "GAME RENTAL SYSTEM");
-                    attroff(A_BOLD);
-                    
-                    // Add more descriptive loading message
-                    attron(A_BOLD);
-                    mvprintw(height/3, (width - 21) / 2, "LOGGING IN USER: %s", username.c_str());
-                    attroff(A_BOLD);
-                    
-                    // Create loading animation
-                    if (has_colors()) {
-                        attron(COLOR_PAIR(2)); // Green text for success message
-                    }
-                    attron(A_BOLD | A_BLINK); // Add blinking effect
-                    mvprintw(height/3 + 2, (width - 34) / 2, "SUCCESS! LOGGING IN TO SYSTEM...");
-                    attroff(A_BOLD | A_BLINK);
-                    if (has_colors()) {
-                        attroff(COLOR_PAIR(2));
-                    }
-                    
-                    // Force refresh to make sure messages are displayed
-                    refresh();
-                    
-                    // Progress bar box - positioned lower to avoid overlap
-                    WINDOW* progress_win = newwin(3, 52, height/3 + 5, (width - 52) / 2);
-                    set_border_color(progress_win);
-                    box(progress_win, 0, 0);
-                    unset_border_color(progress_win);
-                    
-                    // Animate the loading bar with green hashes
-                    if (has_colors()) {
-                        wattron(progress_win, COLOR_PAIR(2)); // Green for hash characters
-                    }
-                    for (int i = 0; i < 50; i++) {
-                        mvwaddch(progress_win, 1, i + 1, '#'); // Use hash character instead of block
-                        wrefresh(progress_win);
-                        napms(30); // Short delay for animation
-                    }
-                    if (has_colors()) {
-                        wattroff(progress_win, COLOR_PAIR(2));
-                    }
-                    
-                    // Clean up
-                    delwin(progress_win);
-                    
-                    is_authenticated = true;
-                    current_user = username;
-                    return true;
-                } else {
-                    // Clean up the message window
-                    delwin(msg_win);
-                    
-                    // Create an error message box
-                    WINDOW* error_win = newwin(10, 60, (height - 10) / 2, (width - 60) / 2);
-                    box(error_win, 0, 0);
-                    
-                    // Add title with error colors
-                    wattron(error_win, A_BOLD);
-                    if (has_colors()) {
-                        wattron(error_win, COLOR_PAIR(3)); // Red for error
-                    }
-                    mvwprintw(error_win, 0, (60 - 16) / 2, " ERROR ");
-                    if (has_colors()) {
-                        wattroff(error_win, COLOR_PAIR(3));
-                    }
-                    wattroff(error_win, A_BOLD);
-                    
-                    // Error message - word wrap if needed
-                    std::string error_msg = "Account creation failed: " + pass_response;
-                    if (error_msg.length() > 50) {
-                        mvwprintw(error_win, 3, 5, "%s", error_msg.substr(0, 50).c_str());
-                        mvwprintw(error_win, 4, 5, "%s", error_msg.substr(50).c_str());
-                    } else {
-                        mvwprintw(error_win, 3, (60 - error_msg.length()) / 2, "%s", error_msg.c_str());
-                    }
-                    
-                    mvwprintw(error_win, 8, (60 - 26) / 2, "Press any key to continue...");
-                    
-                    wrefresh(error_win);
-                    wgetch(error_win);
-                    delwin(error_win);
-                    return false;
-                }
-            } else {
-                // Send PASS command with password
-                std::string pass_response = send_command_and_get_response("PASS " + std::string(password));
-                
-                // Check if login was successful
-                if (pass_response.find("230") != std::string::npos) {
-                    // Clean up existing windows
                     delwin(pass_win);
                     delwin(form_win);
-                    
-                    // Create a full-screen loading screen with animation
-                    clear();
-                    refresh();
-                    
-                    // Show success message and loading animation
-                    attron(A_BOLD);
-                    if (has_colors()) {
-                        attron(COLOR_PAIR(2)); // Green for success
-                    }
-                    mvprintw(height/4, (width - 16) / 2, "LOGIN SUCCESSFUL!");
-                    if (has_colors()) {
-                        attroff(COLOR_PAIR(2));
-                    }
-                    attroff(A_BOLD);
-                    
-                    mvprintw(height/4 + 2, (width - 37) / 2, "Welcome back to the Game Rental System!");
-                    
-                    // First clear the screen completely to make sure messages are visible
-                    clear();
-                    refresh();
-                    
-                    // Draw a border
-                    box(stdscr, 0, 0);
-                    refresh();
-                    
-                    // Draw title at the top
-                    attron(A_BOLD);
-                    mvprintw(2, (width - 19) / 2, "GAME RENTAL SYSTEM");
-                    attroff(A_BOLD);
-                    
-                    // Add more descriptive loading message
-                    attron(A_BOLD);
-                    mvprintw(height/3, (width - 21) / 2, "LOGGING IN USER: %s", username.c_str());
-                    attroff(A_BOLD);
-                    
-                    // Create loading animation
-                    if (has_colors()) {
-                        attron(COLOR_PAIR(2)); // Green text for success message
-                    }
-                    attron(A_BOLD | A_BLINK); // Add blinking effect
-                    mvprintw(height/3 + 2, (width - 34) / 2, "SUCCESS! LOGGING IN TO SYSTEM...");
-                    attroff(A_BOLD | A_BLINK);
-                    if (has_colors()) {
-                        attroff(COLOR_PAIR(2));
-                    }
-                    
-                    // Force refresh to make sure messages are displayed
-                    refresh();
-                    
-                    // Progress bar box - positioned lower to avoid overlap
-                    WINDOW* progress_win = newwin(3, 52, height/3 + 5, (width - 52) / 2);
-                    set_border_color(progress_win);
-                    box(progress_win, 0, 0);
-                    unset_border_color(progress_win);
-                    
-                    // Animate the loading bar with green hashes
-                    if (has_colors()) {
-                        wattron(progress_win, COLOR_PAIR(2)); // Green for hash characters
-                    }
-                    for (int i = 0; i < 50; i++) {
-                        mvwaddch(progress_win, 1, i + 1, '#'); // Use hash character instead of block
-                        wrefresh(progress_win);
-                        napms(30); // Short delay for animation
-                    }
-                    if (has_colors()) {
-                        wattroff(progress_win, COLOR_PAIR(2));
-                    }
-                    
-                    // Clean up
-                    delwin(progress_win);
-                    
-                    is_authenticated = true;
-                    current_user = username;
                     return true;
                 } else {
-                    // Password is incorrect - clear field and show red error message
+                    // Failed account creation (shouldn't happen in normal cases)
+                    attron(COLOR_PAIR(3)); // Red text for error
+                    mvprintw((height - form_height) / 2 + 11, (width - 36) / 2, "Account creation failed. Try again.");
+                    attroff(COLOR_PAIR(3));
+                    refresh();
                     
-                    // Clear password field
+                    // Clear password field for re-entry
                     werase(pass_win);
                     box(pass_win, 0, 0);
                     wrefresh(pass_win);
-                    pos = 0; // Reset cursor position
+                    pos = 0;
+                    memset(password, 0, sizeof(password));
+                    continue;
+                }
+            } else {
+                // For returning users, validate password
+                std::string passwd_str(password);
+                if (login(username, passwd_str)) {
+                    // Successful login
+                    clear();
+                    refresh();
+                    delwin(pass_win);
+                    delwin(form_win);
+                    return true;
+                } else {
+                    // Failed login
+                    attron(COLOR_PAIR(3)); // Red text for error
+                    mvprintw((height - form_height) / 2 + 11, (width - 24) / 2, "Invalid password!");
+                    attroff(COLOR_PAIR(3));
+                    refresh();
                     
-                    // Show error in red in a designated area
-                    if (has_colors()) {
-                        wattron(form_win, COLOR_PAIR(3)); // Red text for error
-                    }
-                    // Clear any previous message first
-                    for (int i = 0; i < form_width - 10; i++) {
-                        mvwaddch(form_win, form_height - 5, 5 + i, ' ');
-                    }
-                    // Then add the new message centered
-                    mvwprintw(form_win, form_height - 5, (form_width - 36) / 2, "Incorrect password. Please try again.");
-                    if (has_colors()) {
-                        wattroff(form_win, COLOR_PAIR(3));
-                    }
-                    wrefresh(form_win);
-                    
-                    // Move cursor back to password field
-                    wmove(pass_win, 1, 1);
+                    // Clear password field for re-entry
+                    werase(pass_win);
+                    box(pass_win, 0, 0);
                     wrefresh(pass_win);
-                    
-                    // Continue the input loop (return to password entry)
+                    pos = 0;
+                    memset(password, 0, sizeof(password));
                     continue;
                 }
             }
@@ -1171,7 +724,6 @@ void redraw_password_form(WINDOW* form_win, WINDOW* pass_win, WINDOW* confirm_wi
     // Redraw instructions
     if (is_new_user) {
         mvwprintw(form_win, 5, (form_width - 43) / 2, "Please choose a password for your new account");
-        mvwprintw(form_win, 6, (form_width - 40) / 2, "(You'll need to enter it twice for verification)");
     } else {
         mvwprintw(form_win, 5, (form_width - 33) / 2, "Please enter your password to log in");
     }
@@ -3037,84 +2589,169 @@ void command_interface() {
     clear();
 }
 
+// Helper function to create a new user account
+bool create_account(const std::string& username, const std::string& password) {
+    // Show a processing message
+    clear();
+    attron(A_BOLD);
+    mvprintw(LINES/3, (COLS - 25) / 2, "Creating your account...");
+    attroff(A_BOLD);
+    refresh();
+    
+    // Send PASS command to set the password
+    std::string pass_response = send_command_and_get_response("PASS " + password);
+    
+    // Check if password was set successfully
+    if (pass_response.find("230") != std::string::npos) {
+        // Success animation
+        clear();
+        attron(A_BOLD | COLOR_PAIR(2)); // Green for success
+        mvprintw(LINES/3, (COLS - 26) / 2, "ACCOUNT CREATED SUCCESSFULLY!");
+        attroff(A_BOLD | COLOR_PAIR(2));
+        
+        // Progress bar animation
+        WINDOW* progress_win = newwin(3, 52, LINES/2, (COLS - 52) / 2);
+        box(progress_win, 0, 0);
+        wrefresh(progress_win);
+        
+        for (int i = 0; i < 50; i++) {
+            wattron(progress_win, COLOR_PAIR(2)); // Green for progress
+            mvwaddch(progress_win, 1, i + 1, '#');
+            wattroff(progress_win, COLOR_PAIR(2));
+            wrefresh(progress_win);
+            napms(30); // Short delay for animation
+        }
+        
+        delwin(progress_win);
+        is_authenticated = true;
+        current_user = username;
+        return true;
+    } else {
+        clear();
+        attron(COLOR_PAIR(3)); // Red for error
+        mvprintw(LINES/3, (COLS - 25) / 2, "Account creation failed");
+        attroff(COLOR_PAIR(3));
+        mvprintw(LINES/3 + 2, (COLS - 26) / 2, "Press any key to continue...");
+        refresh();
+        getch();
+        return false;
+    }
+}
+
+// Helper function to log in existing users
+bool login(const std::string& username, const std::string& password) {
+    // Send PASS command with password
+    std::string pass_response = send_command_and_get_response("PASS " + password);
+    
+    // Check if login was successful
+    if (pass_response.find("230") != std::string::npos) {
+        // Success animation
+        clear();
+        attron(A_BOLD | COLOR_PAIR(2)); // Green for success
+        mvprintw(LINES/3, (COLS - 16) / 2, "LOGIN SUCCESSFUL!");
+        attroff(A_BOLD | COLOR_PAIR(2));
+        
+        // Progress bar animation
+        WINDOW* progress_win = newwin(3, 52, LINES/2, (COLS - 52) / 2);
+        box(progress_win, 0, 0);
+        wrefresh(progress_win);
+        
+        for (int i = 0; i < 50; i++) {
+            wattron(progress_win, COLOR_PAIR(2)); // Green for progress
+            mvwaddch(progress_win, 1, i + 1, '#');
+            wattroff(progress_win, COLOR_PAIR(2));
+            wrefresh(progress_win);
+            napms(30); // Short delay for animation
+        }
+        
+        delwin(progress_win);
+        is_authenticated = true;
+        current_user = username;
+        return true;
+    }
+    
+    return false;
+}
+
 // Main function
 int main(int argc, char* argv[]) {
     // Check command line arguments
     if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " client.conf" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <config_file>\n";
         return 1;
     }
-    
+
     // Read configuration from file
-    std::string server_ip, server_port;
+    std::string serverIP, serverPort;
     std::ifstream configFile(argv[1]);
-    if (!configFile.is_open()) {
-        std::cerr << "Error opening config file: " << argv[1] << std::endl;
+    if (!configFile) {
+        std::cerr << "Error: Could not open config file " << argv[1] << std::endl;
         return 1;
     }
-    
+
     std::string line;
     while (std::getline(configFile, line)) {
         if (line.find("SERVER_IP=") == 0) {
-            server_ip = line.substr(10);
+            serverIP = line.substr(10);
         } else if (line.find("SERVER_PORT=") == 0) {
-            server_port = line.substr(12);
+            serverPort = line.substr(12);
         }
     }
     configFile.close();
-    
-    if (server_ip.empty() || server_port.empty()) {
-        std::cerr << "Invalid config file format." << std::endl;
+
+    if (serverIP.empty() || serverPort.empty()) {
+        std::cerr << "Error: Invalid config file format. Missing SERVER_IP or SERVER_PORT." << std::endl;
         return 1;
     }
-    
+
     // Initialize OpenSSL
     init_openssl();
+
+    // Initialize ncurses
+    initscr();              // Start ncurses mode
+    start_color();          // Enable color support
+    cbreak();               // Line buffering disabled
+    noecho();               // Don't echo while we get characters
+    keypad(stdscr, TRUE);   // Enable function keys and arrow keys
+    curs_set(0);            // Hide cursor
     
-    // Initialize ncurses with proper settings
-    initscr();            // Start ncurses mode
-    cbreak();             // Line buffering disabled
-    noecho();             // Don't echo keystrokes
-    keypad(stdscr, TRUE); // Enable function keys and arrow keys
-    
-    // Make sure cursor is visible
-    curs_set(1);
-    
-    // Enable color if terminal supports it
-    if (has_colors()) {
-        start_color();
-        use_default_colors();  // This enables transparent background (-1)
-        init_pair(1, COLOR_WHITE, COLOR_BLUE);     // For titles
-        init_pair(2, COLOR_GREEN, -1);             // For success messages with transparent background
-        init_pair(3, COLOR_RED, -1);               // For error messages with transparent background
-        init_pair(4, COLOR_YELLOW, -1);            // For warnings/highlights with transparent background
-        init_pair(5, 8, -1);                       // Grey for borders with transparent background
-        
-        // Set transparent background for the main screen
-        // This allows the terminal's background to show through
-        set_transparent_background(stdscr);
-    }
-    
-    // Connect to the server
-    if (!connect_to_server(server_ip, server_port)) {
-        endwin();
-        std::cerr << "Failed to connect to server at " << server_ip << ":" << server_port << std::endl;
+    // Define color pairs
+    init_pair(1, COLOR_WHITE, COLOR_BLUE);    // White on blue (header)
+    init_pair(2, COLOR_BLACK, COLOR_GREEN);   // Black on green (selection)
+    init_pair(3, COLOR_WHITE, COLOR_RED);     // White on red (error)
+    init_pair(4, COLOR_YELLOW, COLOR_BLACK);  // Yellow on black (title)
+    init_pair(5, COLOR_WHITE, COLOR_BLACK);   // White on black (borders)
+
+    // Try to connect to the server
+    bool connected = connect_to_server(serverIP, serverPort);
+    if (!connected) {
+        endwin();  // End ncurses mode
+        std::cerr << "Failed to connect to server at " << serverIP << ":" << serverPort << std::endl;
         cleanup_openssl();
         return 1;
     }
+
+    // Welcome animation
+    clear();
+    attron(A_BOLD);
+    mvprintw(LINES/2, (COLS - 37) / 2, "Welcome to the Game Rental System!");
+    attroff(A_BOLD);
+    refresh();
+    napms(1000);  // Pause for 1 second
     
-    // Show username form first
+    // Process login form
     bool login_success = username_form();
     
-    // If login is successful, show command interface
-    if (login_success) {
+    // Main application loop
+    if (login_success && is_authenticated) {
         command_interface();
     }
-    
-    // Clean up and exit
+
+    // Clean up
+    clear();
+    endwin();            // End ncurses mode
     cleanup_connection();
     cleanup_openssl();
-    endwin();
     
     return 0;
 } 
