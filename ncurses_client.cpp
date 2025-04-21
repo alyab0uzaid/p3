@@ -643,12 +643,25 @@ bool password_form(const std::string& username, bool is_new_user) {
                 pos = 0;
                 bool confirm_first_keypress = true;
                 
-                // Use our dedicated redraw function to fix UI visibility
-                redraw_password_form(form_win, pass_win, confirm_win, height, width, form_height, form_width, username, true);
+                // Use redrawwin to force complete window redrawing without clearing the screen
+                redrawwin(stdscr);    // Force main screen redraw
+                refresh();            // Refresh main screen
+                
+                redrawwin(form_win);  // Force form window redraw 
+                wrefresh(form_win);   // Refresh form window
+                
+                redrawwin(pass_win);  // Force password window redraw
+                wrefresh(pass_win);   // Refresh password window
+                
+                redrawwin(confirm_win); // Force confirm window redraw
+                wrefresh(confirm_win);  // Refresh confirm window
                 
                 // Move to confirmation field
                 wmove(confirm_win, 1, 1);
                 wrefresh(confirm_win);
+                
+                // Do a final refresh to ensure everything is visible
+                refresh();
                 
                 // Input loop for confirm password
                 while (true) {
