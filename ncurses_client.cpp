@@ -643,25 +643,72 @@ bool password_form(const std::string& username, bool is_new_user) {
                 pos = 0;
                 bool confirm_first_keypress = true;
                 
-                // Use redrawwin to force complete window redrawing without clearing the screen
-                redrawwin(stdscr);    // Force main screen redraw
-                refresh();            // Refresh main screen
+                // Reset and reinitialize terminal completely
+                endwin();
+                initscr();
+                cbreak();
+                noecho();
+                keypad(stdscr, TRUE);
                 
-                redrawwin(form_win);  // Force form window redraw 
-                wrefresh(form_win);   // Refresh form window
+                // Re-enable colors
+                if (has_colors()) {
+                    start_color();
+                    use_default_colors();  // This enables transparent background (-1)
+                    init_pair(1, COLOR_WHITE, COLOR_BLUE);     // For titles
+                    init_pair(2, COLOR_GREEN, -1);             // For success messages with transparent background
+                    init_pair(3, COLOR_RED, -1);               // For error messages with transparent background
+                    init_pair(4, COLOR_YELLOW, -1);            // For warnings/highlights with transparent background
+                    init_pair(5, 8, -1);                       // Grey for borders with transparent background
+                    
+                    // Set transparent background for the main screen
+                    set_transparent_background(stdscr);
+                }
                 
-                redrawwin(pass_win);  // Force password window redraw
-                wrefresh(pass_win);   // Refresh password window
+                // Redraw everything
+                clear();
                 
-                redrawwin(confirm_win); // Force confirm window redraw
-                wrefresh(confirm_win);  // Refresh confirm window
+                // Redraw the main border
+                set_border_color(stdscr);
+                box(stdscr, 0, 0);
+                unset_border_color(stdscr);
+                
+                // Redraw the form and its content
+                set_border_color(form_win);
+                box(form_win, 0, 0);
+                unset_border_color(form_win);
+                
+                wattron(form_win, A_BOLD);
+                mvwprintw(form_win, 0, (form_width - 19) / 2, " GAME RENTAL SYSTEM ");
+                mvwprintw(form_win, 2, (form_width - 16) / 2, "CREATE NEW ACCOUNT");
+                mvwprintw(form_win, 3, (form_width - 45) / 2, "Welcome, %s! You're creating a new account.", username.c_str());
+                wattroff(form_win, A_BOLD);
+                
+                // Redraw instructions
+                mvwprintw(form_win, 5, (form_width - 43) / 2, "Please choose a password for your new account");
+                mvwprintw(form_win, 6, (form_width - 40) / 2, "(You'll need to enter it twice for verification)");
+                
+                // Redraw bottom instructions
+                mvwprintw(form_win, form_height - 2, (form_width - 43) / 2, "Press ENTER to create account or ESC to go back");
+                
+                wrefresh(form_win);
+                
+                // Redraw password field
+                set_border_color(pass_win);
+                box(pass_win, 0, 0);
+                unset_border_color(pass_win);
+                wrefresh(pass_win);
+                
+                // Redraw confirmation field
+                set_border_color(confirm_win);
+                box(confirm_win, 0, 0);
+                unset_border_color(confirm_win);
+                
+                // Final global refresh
+                refresh();
                 
                 // Move to confirmation field
                 wmove(confirm_win, 1, 1);
                 wrefresh(confirm_win);
-                
-                // Do a final refresh to ensure everything is visible
-                refresh();
                 
                 // Input loop for confirm password
                 while (true) {
