@@ -556,10 +556,17 @@ bool password_form(const std::string& username, bool is_new_user) {
         box(confirm_win, 0, 0);
         unset_border_color(confirm_win);
         
-        // Add placeholder text inside the confirmation box
+        // Redraw confirmation field and ensure it's empty
+        werase(confirm_win);  // Clear any existing content
+        set_border_color(confirm_win);
+        box(confirm_win, 0, 0);
+        unset_border_color(confirm_win);
+        
+        // Add placeholder text
         wattron(confirm_win, A_DIM);
         mvwprintw(confirm_win, 1, 1, "Confirm password...");
         wattroff(confirm_win, A_DIM);
+        wrefresh(confirm_win);
         
         // Error message for new users will be displayed below the confirmation box
         attron(COLOR_PAIR(3));
@@ -702,13 +709,20 @@ bool password_form(const std::string& username, bool is_new_user) {
                 set_border_color(confirm_win);
                 box(confirm_win, 0, 0);
                 unset_border_color(confirm_win);
+                wrefresh(confirm_win);
                 
                 // Final global refresh
                 refresh();
                 
-                // Move to confirmation field
-                wmove(confirm_win, 1, 1);
-                wrefresh(confirm_win);
+                // Move cursor to confirmation field and ensure it's visible
+                curs_set(1);  // Make cursor visible
+                wmove(confirm_win, 1, 1);  // Move cursor to first position in confirm field
+                wrefresh(confirm_win);  // Update confirm window with cursor
+                napms(50);  // Short delay to allow terminal to update
+                wmove(confirm_win, 1, 1);  // Move cursor again to ensure positioning
+                wrefresh(confirm_win);  // Force another refresh
+                touchwin(confirm_win);  // Mark the entire window for redrawing
+                wrefresh(confirm_win);  // Final refresh
                 
                 // Input loop for confirm password
                 while (true) {
