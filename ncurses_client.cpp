@@ -640,11 +640,18 @@ bool password_form(const std::string& username, bool is_new_user) {
                 pos = 0;
                 bool confirm_first_keypress = true;
                 
-                // Simply refresh all windows to make sure they're visible
-                refresh(); // Main screen refresh
-                wrefresh(form_win);
-                wrefresh(pass_win);
-                wrefresh(confirm_win);
+                // Use touchwin to mark windows for complete redraw
+                touchwin(stdscr);  // Mark main screen for complete redraw
+                refresh();         // Redraw main screen
+                
+                touchwin(form_win);  // Mark form window for complete redraw
+                wrefresh(form_win);  // Redraw form window
+                
+                touchwin(pass_win);  // Mark password window for complete redraw
+                wrefresh(pass_win);  // Redraw password window
+                
+                touchwin(confirm_win);  // Mark confirm window for complete redraw
+                wrefresh(confirm_win);  // Redraw confirm window
                 
                 // Move to confirmation field
                 wmove(confirm_win, 1, 1);
