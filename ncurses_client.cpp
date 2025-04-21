@@ -640,18 +640,8 @@ bool password_form(const std::string& username, bool is_new_user) {
                 pos = 0;
                 bool confirm_first_keypress = true;
                 
-                // Use touchwin to mark windows for complete redraw
-                touchwin(stdscr);  // Mark main screen for complete redraw
-                refresh();         // Redraw main screen
-                
-                touchwin(form_win);  // Mark form window for complete redraw
-                wrefresh(form_win);  // Redraw form window
-                
-                touchwin(pass_win);  // Mark password window for complete redraw
-                wrefresh(pass_win);  // Redraw password window
-                
-                touchwin(confirm_win);  // Mark confirm window for complete redraw
-                wrefresh(confirm_win);  // Redraw confirm window
+                // Use our dedicated redraw function to fix UI visibility
+                redraw_password_form(form_win, pass_win, confirm_win, height, width, form_height, form_width, username, true);
                 
                 // Move to confirmation field
                 wmove(confirm_win, 1, 1);
@@ -1069,6 +1059,72 @@ bool password_form(const std::string& username, bool is_new_user) {
     }
     
     return false;
+}
+
+// Function to redraw the password form UI if needed
+void redraw_password_form(WINDOW* form_win, WINDOW* pass_win, WINDOW* confirm_win, 
+                         int height, int width, int form_height, int form_width,
+                         const std::string& username, bool is_new_user) {
+    // Clear screen and redraw main border
+    clear();
+    
+    // Redraw borders
+    set_border_color(stdscr);
+    box(stdscr, 0, 0);
+    unset_border_color(stdscr);
+    
+    // Redraw form
+    set_border_color(form_win);
+    box(form_win, 0, 0);
+    unset_border_color(form_win);
+    
+    // Redraw form content
+    wattron(form_win, A_BOLD);
+    mvwprintw(form_win, 0, (form_width - 19) / 2, " GAME RENTAL SYSTEM ");
+    
+    if (is_new_user) {
+        mvwprintw(form_win, 2, (form_width - 16) / 2, "CREATE NEW ACCOUNT");
+        mvwprintw(form_win, 3, (form_width - 45) / 2, "Welcome, %s! You're creating a new account.", username.c_str());
+    } else {
+        mvwprintw(form_win, 2, (form_width - 10) / 2, "USER LOGIN");
+        mvwprintw(form_win, 3, (form_width - 42) / 2, "Welcome back, %s! Please enter your password.", username.c_str());
+    }
+    wattroff(form_win, A_BOLD);
+    
+    // Redraw instructions
+    if (is_new_user) {
+        mvwprintw(form_win, 5, (form_width - 43) / 2, "Please choose a password for your new account");
+        mvwprintw(form_win, 6, (form_width - 40) / 2, "(You'll need to enter it twice for verification)");
+    } else {
+        mvwprintw(form_win, 5, (form_width - 33) / 2, "Please enter your password to log in");
+    }
+    
+    // Redraw password field
+    set_border_color(pass_win);
+    box(pass_win, 0, 0);
+    unset_border_color(pass_win);
+    
+    // Redraw confirm password field if needed
+    if (is_new_user && confirm_win) {
+        set_border_color(confirm_win);
+        box(confirm_win, 0, 0);
+        unset_border_color(confirm_win);
+    }
+    
+    // Redraw bottom instructions
+    if (is_new_user) {
+        mvwprintw(form_win, form_height - 2, (form_width - 43) / 2, "Press ENTER to create account or ESC to go back");
+    } else {
+        mvwprintw(form_win, form_height - 2, (form_width - 36) / 2, "Press ENTER to login or ESC to go back");
+    }
+    
+    // Refresh all windows
+    wrefresh(form_win);
+    wrefresh(pass_win);
+    if (is_new_user && confirm_win) {
+        wrefresh(confirm_win);
+    }
+    refresh();
 }
 
 // Interactive menu-based interface with nested menus
