@@ -40,6 +40,9 @@ std::string send_command_and_get_response(const std::string& command);
 void display_message_box(const std::string& message);
 bool username_form();
 bool password_form(const std::string& username, bool is_new_user);
+void redraw_password_form(WINDOW* form_win, WINDOW* pass_win, WINDOW* confirm_win, 
+                         int height, int width, int form_height, int form_width,
+                         const std::string& username, bool is_new_user);
 void command_interface();
 
 // Initialize OpenSSL
