@@ -640,46 +640,15 @@ bool password_form(const std::string& username, bool is_new_user) {
                 pos = 0;
                 bool confirm_first_keypress = true;
                 
-                // Completely redraw the screen to fix the visibility issue
-                clear(); // Clear the screen first
-                
-                // Redraw the main border
-                set_border_color(stdscr);
-                box(stdscr, 0, 0);
-                unset_border_color(stdscr);
-                
-                // Redraw the form and its content
-                set_border_color(form_win);
-                box(form_win, 0, 0);
-                unset_border_color(form_win);
-                
-                wattron(form_win, A_BOLD);
-                mvwprintw(form_win, 0, (form_width - 19) / 2, " GAME RENTAL SYSTEM ");
-                mvwprintw(form_win, 2, (form_width - 16) / 2, "CREATE NEW ACCOUNT");
-                mvwprintw(form_win, 3, (form_width - 45) / 2, "Welcome, %s! You're creating a new account.", username.c_str());
-                wattroff(form_win, A_BOLD);
-                
-                // Redraw instructions
-                mvwprintw(form_win, 5, (form_width - 43) / 2, "Please choose a password for your new account");
-                mvwprintw(form_win, 6, (form_width - 40) / 2, "(You'll need to enter it twice for verification)");
-                
-                // Redraw bottom instructions
-                mvwprintw(form_win, form_height - 2, (form_width - 43) / 2, "Press ENTER to create account or ESC to go back");
-                
+                // Simply refresh all windows to make sure they're visible
+                refresh(); // Main screen refresh
                 wrefresh(form_win);
-                
-                // Redraw the password window to show it's already been filled
-                for (int i = 0; i < strlen(password); i++) {
-                    mvwaddch(pass_win, 1, 1 + i, '*');
-                }
                 wrefresh(pass_win);
+                wrefresh(confirm_win);
                 
                 // Move to confirmation field
                 wmove(confirm_win, 1, 1);
                 wrefresh(confirm_win);
-                
-                // Full screen refresh to ensure everything is visible
-                refresh();
                 
                 // Input loop for confirm password
                 while (true) {
