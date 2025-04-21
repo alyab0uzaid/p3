@@ -644,11 +644,22 @@ bool password_form(const std::string& username, bool is_new_user) {
                 attron(COLOR_PAIR(3));
                 mvprintw((height - form_height) / 2 + 15, (width - 50) / 2, "                                                  ");
                 attroff(COLOR_PAIR(3));
-                refresh();
+                
+                // Add a confirmation indicator message below the first password box
+                attron(COLOR_PAIR(2)); // Green color for guidance
+                mvprintw((height - form_height) / 2 + 11, (width - 36) / 2, "Password accepted. Please confirm below.");
+                attroff(COLOR_PAIR(2));
+                
+                // Important: refresh the main form and windows to ensure they remain visible
+                wrefresh(form_win);
+                wrefresh(pass_win);
                 
                 // Move to confirmation field
                 wmove(confirm_win, 1, 1);
                 wrefresh(confirm_win);
+                
+                // Force a full refresh of all windows
+                refresh();
                 
                 // Input loop for confirm password
                 while (true) {
