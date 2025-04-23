@@ -375,6 +375,28 @@ void sigchld_handler(int s) {
     errno = saved_errno;
 }
 
+// Delete .games_shadow file and cleanup when server is terminated
+void terminate_handler(int s) {
+    std::cout << "Server is shutting down..." << std::endl;
+    
+    // Get current working directory
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+        std::string filePath = std::string(cwd) + "/.games_shadow";
+        
+        // Delete the .games_shadow file
+        if (std::filesystem::exists(filePath)) {
+            std::cout << "Deleting credentials file: " << filePath << std::endl;
+            std::filesystem::remove(filePath);
+        }
+    }
+    
+    // Clean up OpenSSL resources
+    cleanup_openssl();
+    
+    exit(0);
+}
+
 // Picks IPv4 or IPv6 address.
 void* get_in_addr(struct sockaddr* sa) {
     if (sa->sa_family == AF_INET) {
@@ -1709,6 +1731,18 @@ int main(int argc, char* argv[]) {
     if (sigaction(SIGCHLD, &sa, NULL) == -1) {
         cleanup_openssl();
         throw std::system_error(errno, std::generic_category(), "sigaction");
+    }
+
+    // Register handlers for termination signals
+    struct sigaction term_sa;
+    term_sa.sa_handler = terminate_handler;
+    sigemptyset(&term_sa.sa_mask);
+    term_sa.sa_flags = 0; // Don't use SA_RESTART for termination signals
+    
+    if (sigaction(SIGINT, &term_sa, NULL) == -1 || 
+        sigaction(SIGTERM, &term_sa, NULL) == -1) {
+        cleanup_openssl();
+        throw std::system_error(errno, std::generic_category(), "sigaction for termination signals");
     }
 
     std::cout << "server: waiting for connections...\n";
