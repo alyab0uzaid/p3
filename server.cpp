@@ -9,53 +9,40 @@
  */
 
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <cstring>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <cerrno>
-#include <system_error>
-#include <fstream>
-#include <algorithm>
-#include <array>
-#include <filesystem>
-#include <format>
-#include <thread>
-#include <chrono>
 #include <sstream>
-#include <iomanip>
+#include <vector>
 #include <unordered_map>
 #include <mutex>
-#include <cstdlib> // for getcwd
-#include <climits> // for PATH_MAX
-#include <cerrno>  // for errno codes
-
-// OpenSSL headers for TLS support
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <openssl/crypto.h>
+#include <thread>
+#include <chrono>
+#include <iomanip>
+#include <algorithm> // Add for std::transform
+#include <filesystem>
+#include <functional>
+#include <cctype>
+#include <random>
+#include <stdexcept>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-#include <openssl/bio.h>
-
-// Optional ncurses UI support
-// If ncurses_ui.h doesn't exist, define empty stub functions
-#if __has_include("ncurses_ui.h")
-  #include "ncurses_ui.h"
-  #define HAS_NCURSES_UI 1
-#else
-  #define HAS_NCURSES_UI 0
-  // Define stub functions
-  bool init_tui() { return false; }
-  void run_tui_thread() {}
-  void shutdown_tui() {}
-#endif
+#include <openssl/ssl.h>
+#include <openssl/err.h> // For ERR_print_errors_fp
+#include <openssl/bio.h> // For BIO functions
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include <signal.h>
+#include <limits.h>
+#include <csignal>
+#include <fcntl.h>
+#include <pwd.h>
 
 #define BACKLOG 10
 #define MAXDATASIZE 100
@@ -1321,6 +1308,10 @@ bool load_credentials() {
         record.erase(0, record.find_first_not_of(" \t\r\n"));
         record.erase(record.find_last_not_of(" \t\r\n") + 1);
         
+        // Convert username to lowercase for case-insensitive comparison
+        std::transform(username.begin(), username.end(), username.begin(), 
+                      [](unsigned char c){ return std::tolower(c); });
+        
         std::cout << "User: [" << username << "], Record: [" << record << "]" << std::endl;
         
         // Debug: print the first few characters of the record as hex codes
@@ -1508,23 +1499,28 @@ std::string handleUser(const std::string &username, bool &authenticated, std::st
     std::cout << "DEBUG - handleUser called for: " << username << std::endl;
     std::cout << "DEBUG - userCredentials size: " << userCredentials.size() << std::endl;
     
-    currentUser = username;
+    // Convert username to lowercase for case-insensitive comparison
+    std::string lowercaseUsername = username;
+    std::transform(lowercaseUsername.begin(), lowercaseUsername.end(), lowercaseUsername.begin(), 
+                   [](unsigned char c){ return std::tolower(c); });
+    
+    currentUser = lowercaseUsername; // Store lowercase version
     authenticated = false;
     
     // Check if user exists - with enhanced debugging
     std::cout << "DEBUG - Checking if user exists in map..." << std::endl;
-    auto it = userCredentials.find(username);
+    auto it = userCredentials.find(lowercaseUsername);
     
     if (it != userCredentials.end()) {
         // User exists, prepare for authentication
-        std::cout << "DEBUG - FOUND: Existing user found in credentials map: " << username << std::endl;
+        std::cout << "DEBUG - FOUND: Existing user found in credentials map: " << lowercaseUsername << std::endl;
         
         // Reset failed attempts if this is a new login attempt
         it->second.failedAttempts = 0;
         return "331 User name okay, need password.";
     } else {
         // User doesn't exist, prepare for registration
-        std::cout << "DEBUG - NOT FOUND: User not found in credentials map: " << username << std::endl;
+        std::cout << "DEBUG - NOT FOUND: User not found in credentials map: " << lowercaseUsername << std::endl;
         
         // Log existing users for debugging
         std::cout << "DEBUG - Currently loaded users: ";
@@ -1545,7 +1541,7 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
     std::cout << "DEBUG - handlePass called for user: " << currentUser << std::endl;
     std::cout << "DEBUG - userCredentials size: " << userCredentials.size() << std::endl;
     
-    // Check if user exists
+    // Check if user exists - currentUser should already be lowercase from handleUser
     auto it = userCredentials.find(currentUser);
     if (it != userCredentials.end()) {
         // User exists, authenticate
@@ -1688,6 +1684,11 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
 std::string handleNewUser(const std::string &username) {
     std::lock_guard<std::mutex> lock(credentialMutex);
     
+    // Convert username to lowercase
+    std::string lowercaseUsername = username;
+    std::transform(lowercaseUsername.begin(), lowercaseUsername.end(), lowercaseUsername.begin(), 
+                  [](unsigned char c){ return std::tolower(c); });
+    
     // Generate random password
     std::string password = generate_password();
     
@@ -1701,12 +1702,12 @@ std::string handleNewUser(const std::string &username) {
     
     // Store new credentials
     UserCredential cred;
-    cred.username = username;
+    cred.username = lowercaseUsername; // Store lowercase username
     cred.salt = salt_b64;
     cred.hash = hash_b64;
     cred.failedAttempts = 0;
     
-    userCredentials[username] = cred;
+    userCredentials[lowercaseUsername] = cred;
     
     // Save to file
     if (!save_credentials()) {
