@@ -44,6 +44,19 @@
 #include <openssl/rand.h>
 #include <openssl/bio.h>
 
+// Optional ncurses UI support
+// If ncurses_ui.h doesn't exist, define empty stub functions
+#if __has_include("ncurses_ui.h")
+  #include "ncurses_ui.h"
+  #define HAS_NCURSES_UI 1
+#else
+  #define HAS_NCURSES_UI 0
+  // Define stub functions
+  bool init_tui() { return false; }
+  void run_tui_thread() {}
+  void shutdown_tui() {}
+#endif
+
 #define BACKLOG 10
 #define MAXDATASIZE 100
 
@@ -725,24 +738,34 @@ std::string handleShow(const std::vector<Game> &games, const std::string &cmdLin
 }
 
 //CHECKOUT
-std::string handleCheckout(const std::string &clientAddr, int gameId, std::vector<Game> &games) {
+std::string handleCheckout(const std::string &username, int gameId, std::vector<Game> &games) {
     // Makes sure user doesn't have it checked out already.
     std::lock_guard<std::mutex> lock(rentalMutex);
-    auto &uHist = userRentalHistory[clientAddr];
-    for (auto it = uHist.rbegin(); it != uHist.rend(); ++it) {
-        if (it->gameId == gameId && it->action=="CHECKOUT") {
-            bool returned = false;
-            for (auto it2 = uHist.rbegin(); it2 != it; ++it2) {
-                if (it2->gameId == gameId && it2->action=="RETURN") {
-                    returned = true;
-                    break;
+    
+    // Check if user exists in map, create entry if not
+    auto historyIt = userRentalHistory.find(username);
+    if (historyIt == userRentalHistory.end()) {
+        // First checkout for this user, no need to check for already checked out
+        userRentalHistory[username] = {};
+    } else {
+        // Check if user already has this game
+        auto &uHist = historyIt->second;
+        for (auto it = uHist.rbegin(); it != uHist.rend(); ++it) {
+            if (it->gameId == gameId && it->action=="CHECKOUT") {
+                bool returned = false;
+                for (auto it2 = uHist.rbegin(); it2 != it; ++it2) {
+                    if (it2->gameId == gameId && it2->action=="RETURN") {
+                        returned = true;
+                        break;
+                    }
                 }
-            }
-            if (!returned) {
-                return "403 Checkout failed - You already have this game checked out.";
+                if (!returned) {
+                    return "403 Checkout failed - You already have this game checked out.";
+                }
             }
         }
     }
+    
     // Checks if game is available.
     for (auto &gm : games) {
         if (gm.id == gameId) {
@@ -753,7 +776,13 @@ std::string handleCheckout(const std::string &clientAddr, int gameId, std::vecto
             if (gm.copies==0) {
                 gm.available = false;
             }
-            userRentalHistory[clientAddr].push_back({gameId, "CHECKOUT", getCurrentTimestamp()});
+            
+            // Use username as the key in the rental history map
+            userRentalHistory[username].push_back({gameId, "CHECKOUT", getCurrentTimestamp()});
+            
+            // Add debug logging
+            std::cout << "DEBUG: User '" << username << "' checked out game ID " << gameId << std::endl;
+            
             return "250 Checkout success - Enjoy " + gm.title;
         }
     }
@@ -761,10 +790,17 @@ std::string handleCheckout(const std::string &clientAddr, int gameId, std::vecto
 }
 
 //RETURN
-std::string handleReturn(const std::string &clientAddr, int gameId, std::vector<Game> &games) {
+std::string handleReturn(const std::string &username, int gameId, std::vector<Game> &games) {
     // Make sure user has it checked out first.
     std::lock_guard<std::mutex> lock(rentalMutex);
-    auto &uHist = userRentalHistory[clientAddr];
+    
+    // Check if user exists in map
+    auto historyIt = userRentalHistory.find(username);
+    if (historyIt == userRentalHistory.end()) {
+        return "404 Return failed - You have not rented this game.";
+    }
+    
+    auto &uHist = historyIt->second;
     auto it = std::find_if(uHist.rbegin(), uHist.rend(),
                            [gameId](const RentalRecord &r){
                                return (r.gameId == gameId && r.action=="CHECKOUT");
@@ -772,13 +808,20 @@ std::string handleReturn(const std::string &clientAddr, int gameId, std::vector<
     if (it == uHist.rend()) {
         return "404 Return failed - You have not rented this game.";
     }
+    
     // Make sure not already returned
     for (auto it2 = uHist.rbegin(); it2 != it; ++it2) {
         if (it2->gameId == gameId && it2->action=="RETURN") {
             return "404 Return failed - You have not rented this game.";
         }
     }
-    userRentalHistory[clientAddr].push_back({gameId, "RETURN", getCurrentTimestamp()});
+    
+    // Use username as the key in the rental history map
+    userRentalHistory[username].push_back({gameId, "RETURN", getCurrentTimestamp()});
+    
+    // Add debug logging
+    std::cout << "DEBUG: User '" << username << "' returned game ID " << gameId << std::endl;
+    
     for (auto &gm : games) {
         if (gm.id == gameId) {
             gm.copies++;
@@ -790,15 +833,25 @@ std::string handleReturn(const std::string &clientAddr, int gameId, std::vector<
 }
 
 //HISTORY
-std::string handleHistory(const std::string &clientAddr, const std::vector<Game> &games) {
-    std::lock_guard<std::mutex> lock(ratingMutex);
-    if (userRentalHistory[clientAddr].empty()) {
+std::string handleHistory(const std::string &username, const std::vector<Game> &games) {
+    std::lock_guard<std::mutex> lock(rentalMutex);  // Using proper mutex for thread safety
+    
+    // Check if this specific user has rental history
+    auto historyIt = userRentalHistory.find(username);
+    if (historyIt == userRentalHistory.end() || historyIt->second.empty()) {
         return "304 No rental history found.";
     }
+    
     std::ostringstream out;
     out << "250 Rental history:\n";
-    for (auto &record : userRentalHistory[clientAddr]) {
-        for (auto &gm : games) {
+    
+    // Add debug logging
+    std::cout << "DEBUG: Showing rental history for user '" << username << "'" << std::endl;
+    
+    // Only access this specific user's rental history
+    const auto &userHistory = historyIt->second;
+    for (const auto &record : userHistory) {
+        for (const auto &gm : games) {
             if (gm.id == record.gameId) {
                 out << "[" << record.timestamp << "] ";
                 if (record.action=="CHECKOUT") {
@@ -815,10 +868,16 @@ std::string handleHistory(const std::string &clientAddr, const std::vector<Game>
 }
 
 //RECOMMEND
-std::string handleRecommend(const std::string &clientAddr,
+std::string handleRecommend(const std::string &username,
                             const std::vector<Game> &games,
                             const std::string &filterType) {
-    auto it = userRentalHistory.find(clientAddr);
+    // Add proper mutex synchronization for thread safety
+    std::lock_guard<std::mutex> lock(rentalMutex);
+    
+    // Add debug logging
+    std::cout << "DEBUG: Generating recommendations for user '" << username << "'" << std::endl;
+                            
+    auto it = userRentalHistory.find(username);
     if (it == userRentalHistory.end() || it->second.empty()) {
         return "304 No rental history found. Rent some games first.";
     }
@@ -886,14 +945,22 @@ std::string handleRecommend(const std::string &clientAddr,
 }
 
 //RATE
-std::string handleRate(const std::string &clientAddr, int gameId, int ratingVal,
+std::string handleRate(const std::string &username, int gameId, int ratingVal,
                        const std::vector<Game> &games) {
     // Updates the rating if user has actually rented the game.
     std::lock_guard<std::mutex> lock(ratingMutex);
     if (ratingVal < 1 || ratingVal > 10) {
         return "400 BAD REQUEST - Rating must be between 1 and 10.";
     }
-    auto &hist = userRentalHistory[clientAddr];
+    
+    // First check if the user has a rental history
+    auto historyIt = userRentalHistory.find(username);
+    if (historyIt == userRentalHistory.end()) {
+        return "403 Rate failed - You must rent the game before rating it.";
+    }
+    
+    // Now check if the user has rented this specific game
+    auto &hist = historyIt->second;
     auto it = std::find_if(hist.begin(), hist.end(),
                            [gameId](const RentalRecord &r){
                                return (r.gameId == gameId && r.action=="CHECKOUT");
@@ -901,15 +968,21 @@ std::string handleRate(const std::string &clientAddr, int gameId, int ratingVal,
     if (it == hist.end()) {
         return "403 Rate failed - You must rent the game before rating it.";
     }
+    
+    // Update ratings
     auto &rd = globalRatings[gameId];
-    if (userRatings[clientAddr].count(gameId) > 0) {
-        int old = userRatings[clientAddr][gameId];
+    if (userRatings[username].count(gameId) > 0) {
+        int old = userRatings[username][gameId];
         rd.totalRating -= old;
     } else {
         rd.numRatings++;
     }
     rd.totalRating += ratingVal;
-    userRatings[clientAddr][gameId] = ratingVal;
+    userRatings[username][gameId] = ratingVal;
+    
+    // Add debug logging
+    std::cout << "DEBUG: User '" << username << "' rated game ID " << gameId << " with " << ratingVal << "/10" << std::endl;
+    
     std::string gameTitle = "Unknown";
     for (auto &gm : games) {
         if (gm.id == gameId) {
@@ -917,6 +990,7 @@ std::string handleRate(const std::string &clientAddr, int gameId, int ratingVal,
             break;
         }
     }
+    
     std::ostringstream out;
     out << "250 Rate success - You rated \"" << gameTitle << "\" " << ratingVal << "/10.";
     return out.str();
@@ -1311,10 +1385,14 @@ bool load_credentials() {
         std::string saltBase64 = cleanRecord.substr(thirdDollar + 1, fourthDollar - thirdDollar - 1);
         std::string hashBase64 = cleanRecord.substr(fourthDollar + 1);
         
-        // Convert work factor to integer
-        int workFactor;
+        // Convert work factor to integer (validate it's a number)
         try {
-            workFactor = std::stoi(workFactorStr);
+            int workFactor = std::stoi(workFactorStr);
+            // Ensure work factor is reasonable (can add validation if needed)
+            if (workFactor <= 0) {
+                std::cerr << "Invalid work factor for user: " << username << " - must be positive" << std::endl;
+                continue;
+            }
         } catch (const std::exception& e) {
             std::cerr << "Invalid work factor for user: " << username << " - " << e.what() << std::endl;
             continue;
