@@ -5,7 +5,7 @@
  * Updated for P3 security requirements
  * Date: 04/18/2025
  * License: MIT License
- * Description: This is a secure video game rental server using TLS 1.3 for CS447 Spring 2025 P3.
+ * Description: This is a secure video game rental server using TLS for CS447 P3.
  */
 
 #include <iostream>
@@ -19,7 +19,7 @@
 #include <thread>
 #include <chrono>
 #include <iomanip>
-#include <algorithm> // Add for std::transform
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <cctype>
@@ -30,8 +30,8 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
-#include <openssl/err.h> // For ERR_print_errors_fp
-#include <openssl/bio.h> // For BIO functions
+#include <openssl/err.h>
+#include <openssl/bio.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -1196,7 +1196,6 @@ std::string handleCommand(const std::string &command,
 int RAND_bytes_range(int max);
 
 // Generate a random 8-character password 
-// Must include uppercase, lowercase, digit, and special char
 std::string generate_password() {
     const std::string uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const std::string lowercase = "abcdefghijklmnopqrstuvwxyz";
@@ -1215,13 +1214,13 @@ std::string generate_password() {
     password += digits[RAND_bytes_range(digits.size())];
     password += special[RAND_bytes_range(special.size())];
     
-    // Add 3 more random characters (to make 8 total)
+    // Add 3 more random characters
     const std::string all = uppercase + lowercase + digits + special;
     for (int i = 0; i < 3; i++) {
         password += all[RAND_bytes_range(all.size())];
     }
     
-    // Shuffle the password (except the first character which must not be a symbol)
+    // Shuffle the password
     for (int i = password.size() - 1; i > 1; i--) {
         int j = RAND_bytes_range(i) + 1; // Keep first character in place
         std::swap(password[i], password[j]);
@@ -1230,7 +1229,7 @@ std::string generate_password() {
     return password;
 }
 
-// Helper function to get a random number using RAND_bytes
+// get a random number using RAND_bytes
 int RAND_bytes_range(int max) {
     unsigned char rand_byte;
     if (RAND_bytes(&rand_byte, 1) != 1) {
@@ -1248,16 +1247,16 @@ std::vector<unsigned char> generate_salt() {
     return salt;
 }
 
-// Hash password using PBKDF2-HMAC-SHA256
+// Hash password
 std::vector<unsigned char> hash_password(const std::string& password, const std::vector<unsigned char>& salt) {
-    std::vector<unsigned char> hash(32); // SHA-256 output is 32 bytes
+    std::vector<unsigned char> hash(32); 
     
     if (PKCS5_PBKDF2_HMAC(
             password.c_str(), 
             password.length(),
             salt.data(), 
             salt.size(),
-            10000,  // 10,000 iterations as required
+            10000,
             EVP_sha256(),
             hash.size(), 
             hash.data()) != 1) {
@@ -1274,7 +1273,7 @@ bool load_credentials() {
     // Clear existing credentials before loading
     userCredentials.clear();
     
-    // Get full path for .games_shadow - use absolute path for consistency
+    // Get full path for .games_shadow
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) == nullptr) {
         std::cerr << "Failed to get current working directory: " << strerror(errno) << std::endl;
@@ -1284,7 +1283,7 @@ bool load_credentials() {
     std::string filePath = std::string(cwd) + "/.games_shadow";
     std::cout << "Looking for credential file at: " << filePath << std::endl;
     
-    // Check if file exists with proper error handling
+    // Check if file exists
     if (!std::filesystem::exists(filePath)) {
         std::cout << "Credential file not found, creating new empty file" << std::endl;
         
@@ -1299,7 +1298,7 @@ bool load_credentials() {
         return true;  // No users to load yet
     }
     
-    // File exists, try to open it
+
     std::cout << "Found credential file, loading..." << std::endl;
     std::ifstream file(filePath);
     if (!file.is_open()) {
@@ -1307,7 +1306,6 @@ bool load_credentials() {
         return false;
     }
     
-    // Add hex dump of the first few bytes to check for BOM
     file.seekg(0, std::ios::beg);
     char buffer[20];
     std::memset(buffer, 0, sizeof(buffer));
@@ -1354,20 +1352,20 @@ bool load_credentials() {
         record.erase(0, record.find_first_not_of(" \t\r\n"));
         record.erase(record.find_last_not_of(" \t\r\n") + 1);
         
-        // Convert username to lowercase for case-insensitive comparison
+        // Convert username to lowercase
         std::transform(username.begin(), username.end(), username.begin(), 
                       [](unsigned char c){ return std::tolower(c); });
         
         std::cout << "User: [" << username << "], Record: [" << record << "]" << std::endl;
         
-        // Debug: print the first few characters of the record as hex codes
+
         std::cout << "DEBUG - First 10 chars of record (hex): ";
         for (int i = 0; i < 10 && i < record.length(); i++) {
             printf("%02X ", static_cast<unsigned char>(record[i]));
         }
         std::cout << std::endl;
         
-        // Create a clean version of the record by removing any non-ASCII characters at the start
+        // Create a clean version of the record
         std::string cleanRecord = record;
         while (!cleanRecord.empty() && 
                (static_cast<unsigned char>(cleanRecord[0]) < 32 || 
@@ -1375,19 +1373,19 @@ bool load_credentials() {
             cleanRecord.erase(0, 1);
         }
         
-        // At minimum, the record should contain "pbkdf2" somewhere
+        // should contain "pbkdf2" somewhere
         if (cleanRecord.find("pbkdf2") == std::string::npos) {
             std::cerr << "Invalid credential format for user: " << username << " - missing pbkdf2" << std::endl;
             continue;
         }
         
-        // Parse: $pbkdf2-sha256$work_factor$salt_base64$hash_base64
+        // Parse
         std::string expectedPrefix = "$pbkdf2-sha256$";
         std::cout << "DEBUG: Checking record prefix. Record: [" << cleanRecord << "]" << std::endl;
         std::cout << "DEBUG: Expected prefix: [" << expectedPrefix << "] length: " << expectedPrefix.length() << std::endl;
         std::cout << "DEBUG: Actual prefix: [" << cleanRecord.substr(0, expectedPrefix.length()) << "] length: " << cleanRecord.substr(0, expectedPrefix.length()).length() << std::endl;
         
-        // Enhanced debugging for character-by-character comparison
+
         bool prefixMatch = true;
         for (size_t i = 0; i < expectedPrefix.length() && i < cleanRecord.length(); i++) {
             if (cleanRecord[i] != expectedPrefix[i]) {
@@ -1405,7 +1403,7 @@ bool load_credentials() {
             continue;
         }
         
-        // Find positions of $ signs to extract the components
+        
         size_t firstDollar = cleanRecord.find('$');
         size_t secondDollar = cleanRecord.find('$', firstDollar + 1);
         size_t thirdDollar = cleanRecord.find('$', secondDollar + 1);
@@ -1422,10 +1420,9 @@ bool load_credentials() {
         std::string saltBase64 = cleanRecord.substr(thirdDollar + 1, fourthDollar - thirdDollar - 1);
         std::string hashBase64 = cleanRecord.substr(fourthDollar + 1);
         
-        // Convert work factor to integer (validate it's a number)
+        // Convert work factor to int
         try {
             int workFactor = std::stoi(workFactorStr);
-            // Ensure work factor is reasonable (can add validation if needed)
             if (workFactor <= 0) {
                 std::cerr << "Invalid work factor for user: " << username << " - must be positive" << std::endl;
                 continue;
@@ -1435,7 +1432,6 @@ bool load_credentials() {
             continue;
         }
         
-        // Store credentials
         UserCredential cred;
         cred.username = username;
         cred.salt = saltBase64;
@@ -1450,7 +1446,6 @@ bool load_credentials() {
     file.close();
     std::cout << "Credential loading complete. Loaded " << loadedCount << " out of " << lineCount << " entries." << std::endl;
     
-    // Debug: print all loaded users
     std::cout << "Currently loaded users: ";
     for (const auto& [username, _] : userCredentials) {
         std::cout << username << " ";
@@ -1460,9 +1455,7 @@ bool load_credentials() {
     return true;
 }
 
-// Save credentials to file
 bool save_credentials() {
-    // Use absolute path for consistency
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) == nullptr) {
         std::cerr << "Failed to get current working directory: " << strerror(errno) << std::endl;
@@ -1472,19 +1465,6 @@ bool save_credentials() {
     std::string filePath = std::string(cwd) + "/.games_shadow";
     std::cout << "Saving credentials to: " << filePath << std::endl;
     
-    // Backup existing file if it exists
-    if (std::filesystem::exists(filePath)) {
-        std::string backupPath = filePath + ".bak";
-        try {
-            std::filesystem::copy_file(filePath, backupPath, 
-                                      std::filesystem::copy_options::overwrite_existing);
-            std::cout << "Created backup of existing credentials file" << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "Warning: Failed to create backup: " << e.what() << std::endl;
-        }
-    }
-    
-    // Debug: show users being saved
     std::cout << "Saving users: ";
     for (const auto& [username, _] : userCredentials) {
         std::cout << username << " ";
@@ -1517,7 +1497,6 @@ bool save_credentials() {
         count++;
     }
     
-    // Flush and close the file
     outFile.flush();
     outFile.close();
     
@@ -1526,7 +1505,7 @@ bool save_credentials() {
         return false;
     }
     
-    // Rename temporary file to the actual file (atomic operation)
+    // Rename temporary file to the actual filex
     try {
         std::filesystem::rename(tempFilePath, filePath);
     } catch (const std::exception& e) {
@@ -1538,23 +1517,22 @@ bool save_credentials() {
     return true;
 }
 
-// Handle USER command - this checks if the user exists or starts registration
+// Handle USER
 std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser, bool &closeConnection) {
     std::lock_guard<std::mutex> lock(credentialMutex);
     
     std::cout << "DEBUG - handleUser called for: " << username << std::endl;
     std::cout << "DEBUG - userCredentials size: " << userCredentials.size() << std::endl;
     
-    // Convert username to lowercase for case-insensitive comparison
+    // Convert username to lowercase
     std::string lowercaseUsername = username;
     std::transform(lowercaseUsername.begin(), lowercaseUsername.end(), lowercaseUsername.begin(), 
                    [](unsigned char c){ return std::tolower(c); });
     
-    currentUser = lowercaseUsername; // Store lowercase version
+    currentUser = lowercaseUsername;
     authenticated = false;
-    closeConnection = false; // Default is to keep connection open
+    closeConnection = false;
     
-    // Check if user exists - with enhanced debugging
     std::cout << "DEBUG - Checking if user exists in map..." << std::endl;
     auto it = userCredentials.find(lowercaseUsername);
     
@@ -1570,7 +1548,7 @@ std::string handleUser(const std::string &username, bool &authenticated, std::st
         std::cout << "DEBUG - NOT FOUND: User not found in credentials map: " << lowercaseUsername << std::endl;
         
         try {
-            // Generate a random password for the new user
+            // Generate a random password
             std::string userPassword = generate_password();
             std::cout << "DEBUG - Generated random password: " << userPassword << std::endl;
             
@@ -1617,20 +1595,20 @@ std::string handleUser(const std::string &username, bool &authenticated, std::st
     }
 }
 
-// Handle PASS command - authenticate user or register new user
+// Handle PASS
 std::string handlePass(const std::string &password, bool &authenticated, std::string &currentUser,
                       bool &browseMode, bool &rentMode, bool &myGamesMode, bool &closeConnection) {
     std::lock_guard<std::mutex> lock(credentialMutex);
     
-    closeConnection = false; // Default is to keep connection open
+    closeConnection = false;
     
     std::cout << "DEBUG - handlePass called for user: " << currentUser << std::endl;
     std::cout << "DEBUG - userCredentials size: " << userCredentials.size() << std::endl;
     
-    // Check if user exists - currentUser should already be lowercase from handleUser
+    // Check if user exists
     auto it = userCredentials.find(currentUser);
     if (it == userCredentials.end()) {
-        // User doesn't exist - this should not happen as new users are handled by handleUser
+        // User doesn't exist
         std::cout << "DEBUG - User not found in PASS command: " << currentUser << std::endl;
         return "410 Authentication failed: User not found";
     }
@@ -1714,7 +1692,7 @@ std::string handleNewUser(const std::string &username) {
     
     // Store new credentials
     UserCredential cred;
-    cred.username = lowercaseUsername; // Store lowercase username
+    cred.username = lowercaseUsername;
     cred.salt = salt_b64;
     cred.hash = hash_b64;
     cred.failedAttempts = 0;
@@ -1757,14 +1735,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Load user credentials from .games_shadow file
+    // Load user credentials from .games_shadow
     if (!load_credentials()) {
         std::cerr << "Failed to load user credentials" << std::endl;
         cleanup_openssl();
         return 1;
     }
     
-    // Debug: Check how many users are loaded
     std::cout << "=======================================================" << std::endl;
     std::cout << "SERVER STARTUP COMPLETE" << std::endl;
     std::cout << "Loaded " << userCredentials.size() << " users from credentials file" << std::endl;
@@ -1828,7 +1805,7 @@ int main(int argc, char* argv[]) {
     struct sigaction term_sa;
     term_sa.sa_handler = terminate_handler;
     sigemptyset(&term_sa.sa_mask);
-    term_sa.sa_flags = 0; // Don't use SA_RESTART for termination signals
+    term_sa.sa_flags = 0;
     
     if (sigaction(SIGINT, &term_sa, NULL) == -1 || 
         sigaction(SIGTERM, &term_sa, NULL) == -1) {
@@ -1853,7 +1830,7 @@ int main(int argc, char* argv[]) {
             logEvent("Starting TLS handshake with client: " + clientAddress);
             
             try {
-                // Create SSL connection and perform handshake
+                // Create SSL connection
                 SSLConnection ssl_conn(new_fd);
                 if (!ssl_conn.accept()) {
                     logEvent("TLS handshake failed with client: " + clientAddress);
@@ -1893,10 +1870,8 @@ int main(int argc, char* argv[]) {
                     
                     buf[numbytes] = '\0';
                     
-                    // Clean up received command by removing any trailing whitespace/newlines
                     std::string received(buf.data());
                     
-                    // Remove trailing newline if it exists
                     if (!received.empty() && received.back() == '\n') {
                         received.pop_back();
                     }
@@ -1924,7 +1899,6 @@ int main(int argc, char* argv[]) {
                     std::cout << "Sending response (length: " << minimal_response.length() << "): \"" 
                               << response << "\\n\"" << std::endl;
                     
-                    // Direct SSL_write with minimal formatting
                     int direct_result = SSL_write(ssl_conn.ssl, minimal_response.c_str(), minimal_response.length());
                     
                     if (direct_result <= 0) {
@@ -1932,7 +1906,6 @@ int main(int argc, char* argv[]) {
                         std::cerr << "SSL write error: " << ssl_error << std::endl;
                         ERR_print_errors_fp(stderr);
                         
-                        // Check if it's a temporary error we should retry
                         if (ssl_error == SSL_ERROR_WANT_WRITE || ssl_error == SSL_ERROR_WANT_READ) {
                             std::cerr << "SSL operation would block, retrying write..." << std::endl;
                             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1948,20 +1921,17 @@ int main(int argc, char* argv[]) {
                                 break;
                             }
                         } else {
-                            // Serious error, terminate connection
                             break;
                         }
                     }
                     
                     std::cout << "Successfully sent " << direct_result << " bytes" << std::endl;
                     
-                    // Check if we need to close the connection based on protocol requirements
                     if (closeConnection) {
                         logEvent("Closing connection as required by protocol (new user registration or too many failed attempts)");
                         break;
                     }
                     
-                    // Also check for user-initiated quit command
                     if (response.rfind("200 BYE", 0) == 0) {
                         logEvent("Client disconnected: " + clientAddress);
                         break;
@@ -1971,12 +1941,10 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Exception in client thread: " << e.what() << std::endl;
             }
             
-            // The SSLConnection destructor will clean up the connection and close the socket
         });
         clientThread.detach();
     }
 
-    // Clean up OpenSSL
     cleanup_openssl();
 
     return 0;
