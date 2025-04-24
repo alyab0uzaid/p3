@@ -23,7 +23,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-// Global variables
 SSL_CTX* ssl_ctx = nullptr;
 SSL* ssl = nullptr;
 int sockfd = -1;
@@ -31,16 +30,13 @@ bool connected = false;
 bool authenticated = false;
 std::string current_user;
 
-// Configuration
 std::string server_host;
 std::string server_port;
 
-// UI components
 WINDOW* status_win = nullptr;
 WINDOW* input_win = nullptr;
 WINDOW* output_win = nullptr;
 
-// Function prototypes
 bool read_config(const std::string& config_file);
 bool init_openssl();
 void cleanup_openssl();
@@ -60,7 +56,6 @@ std::string get_string_input(const std::string& prompt);
 int get_int_input(const std::string& prompt);
 int menu_selection(const std::vector<std::string>& menu_items);
 
-// Read configuration from client.conf
 bool read_config(const std::string& config_file) {
     std::ifstream conf(config_file);
     if (!conf.is_open()) {
@@ -94,7 +89,6 @@ bool init_openssl() {
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();
     
-    // Create SSL context with TLS client method
     const SSL_METHOD* method = TLS_client_method();
     ssl_ctx = SSL_CTX_new(method);
     if (!ssl_ctx) {
@@ -103,7 +97,6 @@ bool init_openssl() {
         return false;
     }
     
-    // Set TLS 1.3 as the only allowed protocol version
     if (SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_3_VERSION) != 1) {
         std::cerr << "Failed to set minimum TLS version" << std::endl;
         ERR_print_errors_fp(stderr);
@@ -150,7 +143,7 @@ bool connect_to_server() {
         return false;
     }
     
-    // Loop through all the results and connect to the first we can
+    // Loop through all the results and connect
     for(p = servinfo; p != nullptr; p = p->ai_next) {
         if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
             perror("client: socket");
@@ -173,7 +166,7 @@ bool connect_to_server() {
     
     freeaddrinfo(servinfo);
     
-    // Create a new SSL structure
+    // New SSL structure
     ssl = SSL_new(ssl_ctx);
     if (!ssl) {
         std::cerr << "Failed to create SSL structure" << std::endl;
@@ -182,10 +175,10 @@ bool connect_to_server() {
         return false;
     }
     
-    // Attach the socket descriptor to the SSL structure
+
     SSL_set_fd(ssl, sockfd);
     
-    // Perform the SSL handshake
+    //SSL handshake
     if (SSL_connect(ssl) != 1) {
         std::cerr << "SSL connect failed" << std::endl;
         ERR_print_errors_fp(stderr);
@@ -245,7 +238,7 @@ bool send_command(const std::string& command, std::string& response) {
     buffer[bytes] = '\0';
     response = buffer;
     
-    // Remove trailing newline if present
+    // Remove newline if present
     if (!response.empty() && response.back() == '\n') {
         response.pop_back();
     }
@@ -255,7 +248,6 @@ bool send_command(const std::string& command, std::string& response) {
 
 // Initialize ncurses UI
 void init_ui() {
-    // Initialize ncurses
     initscr();
     start_color();
     cbreak();
@@ -377,7 +369,7 @@ int get_int_input(const std::string& prompt) {
             box(input_win, 0, 0);
             mvwprintw(input_win, 1, 2, "Invalid number. Try again.");
             wrefresh(input_win);
-            // Wait a moment so the user can see the error
+
             napms(1500);
         }
     }
@@ -437,7 +429,6 @@ void show_login_screen() {
             current_user = username;
             update_status("Logged in as: " + current_user);
             
-            // Display success message
             show_message("Login successful! Welcome, " + current_user);
             
             // Wait for user to press a key
@@ -593,7 +584,7 @@ void handle_browse_mode() {
             }
                 
             default:
-                browsing = false; // User pressed F1 or other key
+                browsing = false;
                 break;
         }
     }
@@ -665,7 +656,7 @@ void handle_rent_mode() {
             }
                 
             default:
-                renting = false; // User pressed F1 or other key
+                renting = false;
                 break;
         }
     }
@@ -764,19 +755,19 @@ void handle_my_games_mode() {
             }
                 
             default:
-                my_games = false; // User pressed F1 or other key
+                my_games = false;
                 break;
         }
     }
 }
 
-// Helper function for arrow-key based menu
+
 int menu_selection(const std::vector<std::string>& menu_items) {
     int selection = 0;
     int key;
     int max_items = menu_items.size();
     
-    // Enable keyboard input for output window
+
     keypad(output_win, TRUE);
     
     // Draw initial menu
@@ -792,7 +783,7 @@ int menu_selection(const std::vector<std::string>& menu_items) {
     }
     wrefresh(output_win);
     
-    // Clear input window and show navigation help
+
     werase(input_win);
     mvwprintw(input_win, 1, 1, "Use UP/DOWN arrows and ENTER to select");
     wrefresh(input_win);
@@ -833,7 +824,6 @@ int menu_selection(const std::vector<std::string>& menu_items) {
         wrefresh(output_win);
     }
     
-    // Should never reach here
     return -1;
 }
 
@@ -883,7 +873,7 @@ void show_main_menu() {
                 
                 
             default:
-                running = false; // User pressed F1 or some other key
+                running = false;
                 break;
         }
     }
@@ -930,7 +920,6 @@ int main(int argc, char* argv[]) {
             if (!authenticated) {
                 show_login_screen();
                 if (!authenticated && !connected) {
-                    // If we're not authenticated and not connected, connection was closed
                     running = false;
                     continue;
                 }
@@ -941,7 +930,6 @@ int main(int argc, char* argv[]) {
                 show_main_menu();
             }
             
-            // If we reach here after main menu, we should exit
             running = false;
         }
     } catch (const std::exception& e) {
