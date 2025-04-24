@@ -998,9 +998,9 @@ std::string handleRating(const std::vector<Game> &games, int gameId) {
 }
 
 // Forward declarations for authentication functions
-std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser);
+std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser, bool &closeConnection);
 std::string handlePass(const std::string &password, bool &authenticated, std::string &currentUser,
-                      bool &browseMode, bool &rentMode, bool &myGamesMode);
+                      bool &browseMode, bool &rentMode, bool &myGamesMode, bool &closeConnection);
 
 // handleCommand
 std::string handleCommand(const std::string &command,
@@ -1010,28 +1010,26 @@ std::string handleCommand(const std::string &command,
                           bool &rentMode,
                           bool &myGamesMode,
                           std::vector<Game> &games,
-                          std::string &currentUser) {
-
-    // Debug print for every command
-    std::cout << "Received command: '" << command << "'" << std::endl;
-    std::cout << "Auth state: " << (authenticated ? "Authenticated" : "Not Authenticated") << std::endl;
-    std::cout << "Current User: '" << currentUser << "'" << std::endl;
-    std::cout << "Modes: " << (browseMode ? "Browse " : "") 
-              << (rentMode ? "Rent " : "") 
-              << (myGamesMode ? "MyGames" : "") << std::endl;
-
-    // Check for empty command
+                          std::string &currentUser,
+                          bool &closeConnection) {
+    // Set default for closeConnection
+    closeConnection = false;
+    
+    // Empty command
     if (command.empty()) {
-        std::cout << "Warning: Empty command received" << std::endl;
-        return "400 BAD REQUEST - Empty command";
+        return "501 Invalid command";
     }
-
-    // USER/PASS commands don't require authentication
+    
+    // Log the command
+    std::cout << "Command from " << clientAddr << ": " << command << std::endl;
+    
+    // Handle USER command - this is allowed even if not authenticated
     if (command.rfind("USER ", 0) == 0) {
-        return handleUser(command.substr(5), authenticated, currentUser);
+        return handleUser(command.substr(5), authenticated, currentUser, closeConnection);
     } 
+    // Handle PASS command - this is the second part of authentication
     else if (command.rfind("PASS ", 0) == 0) {
-        return handlePass(command.substr(5), authenticated, currentUser, browseMode, rentMode, myGamesMode);
+        return handlePass(command.substr(5), authenticated, currentUser, browseMode, rentMode, myGamesMode, closeConnection);
     }
     
     // All other commands require authentication
@@ -1158,9 +1156,13 @@ std::string generate_password() {
     const std::string uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const std::string lowercase = "abcdefghijklmnopqrstuvwxyz";
     const std::string digits = "0123456789";
-    const std::string special = "!@#$%^&*";
+    const std::string special = "!@#$%&*_-+=";
     
     std::string password;
+    
+    // Start with a non-symbol character (uppercase, lowercase, or digit)
+    const std::string non_symbol = uppercase + lowercase + digits;
+    password += non_symbol[RAND_bytes_range(non_symbol.size())];
     
     // Add at least one from each category
     password += uppercase[RAND_bytes_range(uppercase.size())];
@@ -1168,20 +1170,19 @@ std::string generate_password() {
     password += digits[RAND_bytes_range(digits.size())];
     password += special[RAND_bytes_range(special.size())];
     
-    // Add 4 more random characters
+    // Add 3 more random characters (to make 8 total)
     const std::string all = uppercase + lowercase + digits + special;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
         password += all[RAND_bytes_range(all.size())];
     }
     
-    // Shuffle the password
-    std::vector<char> password_chars(password.begin(), password.end());
-    for (int i = password_chars.size() - 1; i > 0; i--) {
-        int j = RAND_bytes_range(i + 1);
-        std::swap(password_chars[i], password_chars[j]);
+    // Shuffle the password (except the first character which must not be a symbol)
+    for (int i = password.size() - 1; i > 1; i--) {
+        int j = RAND_bytes_range(i) + 1; // Keep first character in place
+        std::swap(password[i], password[j]);
     }
     
-    return std::string(password_chars.begin(), password_chars.end());
+    return password;
 }
 
 // Helper function to get a random number using RAND_bytes
@@ -1493,7 +1494,7 @@ bool save_credentials() {
 }
 
 // Handle USER command - this checks if the user exists or starts registration
-std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser) {
+std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser, bool &closeConnection) {
     std::lock_guard<std::mutex> lock(credentialMutex);
     
     std::cout << "DEBUG - handleUser called for: " << username << std::endl;
@@ -1506,6 +1507,7 @@ std::string handleUser(const std::string &username, bool &authenticated, std::st
     
     currentUser = lowercaseUsername; // Store lowercase version
     authenticated = false;
+    closeConnection = false; // Default is to keep connection open
     
     // Check if user exists - with enhanced debugging
     std::cout << "DEBUG - Checking if user exists in map..." << std::endl;
@@ -1517,102 +1519,17 @@ std::string handleUser(const std::string &username, bool &authenticated, std::st
         
         // Reset failed attempts if this is a new login attempt
         it->second.failedAttempts = 0;
-        return "331 User name okay, need password.";
+        return "300 Password required";
     } else {
-        // User doesn't exist, prepare for registration
+        // User doesn't exist, implement New User Registration Protocol
         std::cout << "DEBUG - NOT FOUND: User not found in credentials map: " << lowercaseUsername << std::endl;
         
-        // Log existing users for debugging
-        std::cout << "DEBUG - Currently loaded users: ";
-        for (const auto& [user, _] : userCredentials) {
-            std::cout << user << " ";
-        }
-        std::cout << std::endl;
-        
-        return "331 New user, need password to create account.";
-    }
-}
-
-// Handle PASS command - authenticate user or register new user
-std::string handlePass(const std::string &password, bool &authenticated, std::string &currentUser,
-                      bool &browseMode, bool &rentMode, bool &myGamesMode) {
-    std::lock_guard<std::mutex> lock(credentialMutex);
-    
-    std::cout << "DEBUG - handlePass called for user: " << currentUser << std::endl;
-    std::cout << "DEBUG - userCredentials size: " << userCredentials.size() << std::endl;
-    
-    // Check if user exists - currentUser should already be lowercase from handleUser
-    auto it = userCredentials.find(currentUser);
-    if (it != userCredentials.end()) {
-        // User exists, authenticate
-        std::cout << "DEBUG - Existing user found, performing authentication" << std::endl;
-        UserCredential &cred = it->second;
-        
-        // Check for too many failed attempts
-        if (cred.failedAttempts >= 2) {
-            std::cout << "DEBUG - Too many failed attempts for user: " << currentUser << std::endl;
-            return "530 Authentication failed: too many invalid attempts.";
-        }
-        
         try {
-            // Decode the stored salt
-            std::cout << "DEBUG - Decoding salt: " << cred.salt << std::endl;
-            auto salt_bin = base64_decode(cred.salt);
-            std::cout << "DEBUG - Salt decoded, size: " << salt_bin.size() << " bytes" << std::endl;
+            // Generate a random password for the new user
+            std::string userPassword = generate_password();
+            std::cout << "DEBUG - Generated random password: " << userPassword << std::endl;
             
-            // Hash the provided password with the stored salt
-            std::cout << "DEBUG - Hashing password: '" << password << "'" << std::endl;
-            auto hash = hash_password(password, salt_bin);
-            std::string hash_b64 = base64_encode(hash.data(), hash.size());
-            
-            std::cout << "DEBUG - Comparing hashes:" << std::endl;
-            std::cout << "  Stored hash: " << cred.hash << std::endl;
-            std::cout << "  Computed hash: " << hash_b64 << std::endl;
-            
-            // Compare with stored hash
-            if (hash_b64 == cred.hash) {
-                authenticated = true;
-                cred.failedAttempts = 0;
-                // Set all modes to false to start in main menu
-                browseMode = false;
-                rentMode = false;
-                myGamesMode = false;
-                std::cout << "DEBUG - Authentication successful for user: " << currentUser << std::endl;
-                // CRITICAL FIX: Absolutely minimal response for OpenSSL s_client
-                return "230 OK";
-            } else {
-                // Failed authentication
-                cred.failedAttempts++;
-                authenticated = false;
-                
-                std::cout << "DEBUG - Authentication failed for user: " << currentUser << std::endl;
-                std::cout << "DEBUG - Failed attempts: " << cred.failedAttempts << "/2" << std::endl;
-                return "530 Authentication failed: Invalid password";
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "DEBUG - Exception during authentication: " << e.what() << std::endl;
-            return "500 INTERNAL SERVER ERROR - Exception during authentication";
-        }
-    } else {
-        // Register new user
-        std::cout << "DEBUG - User not found in map for PASS command - registering new user: " << currentUser << std::endl;
-        std::cout << "DEBUG - Current map contents: ";
-        for (const auto& [user, _] : userCredentials) {
-            std::cout << user << " ";
-        }
-        std::cout << std::endl;
-        
-        try {
-            // Generate random password if none provided
-            std::string userPassword = password;
-            if (userPassword.empty()) {
-                userPassword = generate_password();
-                std::cout << "DEBUG - Generated random password: " << userPassword << std::endl;
-            } else {
-                std::cout << "DEBUG - Using provided password" << std::endl;
-            }
-            
-            // Generate salt and hash outside the lock to minimize lock time
+            // Generate salt and hash
             auto salt = generate_salt();
             std::cout << "DEBUG - Generated salt, size: " << salt.size() << " bytes" << std::endl;
             
@@ -1623,60 +1540,110 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
             std::string salt_b64 = base64_encode(salt.data(), salt.size());
             std::string hash_b64 = base64_encode(hash.data(), hash.size());
             
-            std::cout << "DEBUG - Encoded salt: " << salt_b64 << std::endl;
-            std::cout << "DEBUG - Encoded hash: " << hash_b64 << std::endl;
-            
             // Create credential object
             UserCredential cred;
-            cred.username = currentUser;
+            cred.username = lowercaseUsername;
             cred.salt = salt_b64;
             cred.hash = hash_b64;
             cred.failedAttempts = 0;
             
             // Store in memory
-            userCredentials[currentUser] = cred;
-            std::cout << "DEBUG - Added user to credentials map: " << currentUser << std::endl;
+            userCredentials[lowercaseUsername] = cred;
+            std::cout << "DEBUG - Added user to credentials map: " << lowercaseUsername << std::endl;
             
-            // Log that we're saving credentials
-            std::cout << "DEBUG - Saving credentials to file" << std::endl;
-            
-            // Save credentials but continue even if it fails
-            bool saveResult = save_credentials();
-            if (!saveResult) {
-                std::cerr << "DEBUG - Failed to save credentials to file, but continuing" << std::endl;
-            } else {
-                std::cout << "DEBUG - Credentials saved successfully" << std::endl;
-                std::cout << "DEBUG - Map now contains " << userCredentials.size() << " users" << std::endl;
+            // Save credentials
+            if (!save_credentials()) {
+                std::cerr << "DEBUG - Failed to save credentials to file" << std::endl;
+                return "500 INTERNAL SERVER ERROR - Failed to save credentials";
             }
             
-            // Set the user as authenticated and start with no mode active (main menu)
-            authenticated = true;
-            browseMode = false;
-            rentMode = false;
-            myGamesMode = false;
+            // Set flag to close connection after sending response
+            closeConnection = true;
             
-            // Simple, minimal single-line response that's easier for s_client to display
-            std::cout << "DEBUG - Authentication successful for new user: " << currentUser << std::endl;
+            std::cout << "DEBUG - New user registered: " << lowercaseUsername << std::endl;
             
-            // If we generated a password, tell the user what it is
-            if (password.empty()) {
-                return "230 New user created. Your password is: " + userPassword;
-            } else {
-                return "230 New user account created successfully";
-            }
+            // Return the generated password to the user
+            return "230 New user created. Your password is: " + userPassword;
         }
         catch (const std::exception& e) {
-            std::cerr << "DEBUG - Exception during credential preparation: " << e.what() << std::endl;
+            std::cerr << "DEBUG - Exception during user registration: " << e.what() << std::endl;
             return "500 INTERNAL SERVER ERROR - Exception during registration";
         }
     }
+}
+
+// Handle PASS command - authenticate user or register new user
+std::string handlePass(const std::string &password, bool &authenticated, std::string &currentUser,
+                      bool &browseMode, bool &rentMode, bool &myGamesMode, bool &closeConnection) {
+    std::lock_guard<std::mutex> lock(credentialMutex);
     
-    // This should never be reached, but just in case
-    std::cout << "WARNING: Reached end of handlePass function without early return" << std::endl;
-    if (authenticated) {
-        return "230 User login successful";
-    } else {
-        return "530 Authentication failed";
+    closeConnection = false; // Default is to keep connection open
+    
+    std::cout << "DEBUG - handlePass called for user: " << currentUser << std::endl;
+    std::cout << "DEBUG - userCredentials size: " << userCredentials.size() << std::endl;
+    
+    // Check if user exists - currentUser should already be lowercase from handleUser
+    auto it = userCredentials.find(currentUser);
+    if (it == userCredentials.end()) {
+        // User doesn't exist - this should not happen as new users are handled by handleUser
+        std::cout << "DEBUG - User not found in PASS command: " << currentUser << std::endl;
+        return "410 Authentication failed: User not found";
+    }
+    
+    // User exists, authenticate
+    std::cout << "DEBUG - Existing user found, performing authentication" << std::endl;
+    UserCredential &cred = it->second;
+    
+    // Check for too many failed attempts
+    if (cred.failedAttempts >= 2) {
+        std::cout << "DEBUG - Too many failed attempts for user: " << currentUser << std::endl;
+        closeConnection = true; // Close connection after too many attempts
+        return "410 Authentication failed: too many invalid attempts";
+    }
+    
+    try {
+        // Decode the stored salt
+        std::cout << "DEBUG - Decoding salt: " << cred.salt << std::endl;
+        auto salt_bin = base64_decode(cred.salt);
+        std::cout << "DEBUG - Salt decoded, size: " << salt_bin.size() << " bytes" << std::endl;
+        
+        // Hash the provided password with the stored salt
+        std::cout << "DEBUG - Hashing password: '" << password << "'" << std::endl;
+        auto hash = hash_password(password, salt_bin);
+        std::string hash_b64 = base64_encode(hash.data(), hash.size());
+        
+        std::cout << "DEBUG - Comparing hashes:" << std::endl;
+        std::cout << "  Stored hash: " << cred.hash << std::endl;
+        std::cout << "  Computed hash: " << hash_b64 << std::endl;
+        
+        // Compare with stored hash
+        if (hash_b64 == cred.hash) {
+            authenticated = true;
+            cred.failedAttempts = 0;
+            // Set all modes to false to start in main menu
+            browseMode = false;
+            rentMode = false;
+            myGamesMode = false;
+            std::cout << "DEBUG - Authentication successful for user: " << currentUser << std::endl;
+            return "210 Authentication successful";
+        } else {
+            // Failed authentication
+            cred.failedAttempts++;
+            authenticated = false;
+            
+            std::cout << "DEBUG - Authentication failed for user: " << currentUser << std::endl;
+            std::cout << "DEBUG - Failed attempts: " << cred.failedAttempts << "/2" << std::endl;
+            
+            // Check if this was the second failed attempt
+            if (cred.failedAttempts >= 2) {
+                closeConnection = true; // Close connection after 2 failures
+            }
+            
+            return "410 Authentication failed: Invalid password";
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "DEBUG - Exception during authentication: " << e.what() << std::endl;
+        return "500 INTERNAL SERVER ERROR - Exception during authentication";
     }
 }
 
@@ -1689,7 +1656,7 @@ std::string handleNewUser(const std::string &username) {
     std::transform(lowercaseUsername.begin(), lowercaseUsername.end(), lowercaseUsername.begin(), 
                   [](unsigned char c){ return std::tolower(c); });
     
-    // Generate random password
+    // Always generate random password that meets requirements
     std::string password = generate_password();
     
     // Generate salt and hash
@@ -1858,6 +1825,7 @@ int main(int argc, char* argv[]) {
                 bool rentMode = false;
                 bool myGamesMode = false;
                 std::string currentUser;
+                bool closeConnection = false;
 
                 while (true) {
                     numbytes = ssl_conn.read(buf.data(), MAXDATASIZE - 1);
@@ -1895,7 +1863,7 @@ int main(int argc, char* argv[]) {
                         received, clientAddress,
                         authenticated, browseMode,
                         rentMode, myGamesMode,
-                        games, currentUser
+                        games, currentUser, closeConnection
                     );
                     
                     // Debug output
@@ -1942,6 +1910,13 @@ int main(int argc, char* argv[]) {
                     
                     std::cout << "Successfully sent " << direct_result << " bytes" << std::endl;
                     
+                    // Check if we need to close the connection based on protocol requirements
+                    if (closeConnection) {
+                        logEvent("Closing connection as required by protocol (new user registration or too many failed attempts)");
+                        break;
+                    }
+                    
+                    // Also check for user-initiated quit command
                     if (response.rfind("200 BYE", 0) == 0) {
                         logEvent("Client disconnected: " + clientAddress);
                         break;
