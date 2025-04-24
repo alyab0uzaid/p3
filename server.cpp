@@ -222,15 +222,13 @@ struct SSLConnection {
     // Write a string response with proper line ending
     int write_response(const std::string& response) {
         std::string full_response = response + "\r\n";
-        std::cout << "Sending response: " << response << std::endl;
         int result = SSL_write(ssl, full_response.c_str(), full_response.length());
         return result;
     }
 
     // Write a response in a format compatible with OpenSSL s_client
-    // This method is ineffective with the openssl s_client tool - use the direct SSL_write instead
     int write_multiline_response(const std::string& response) {
-        // CRITICAL FIX: Ensure we actually have a response to send
+        // Ensure we actually have a response to send
         if (response.empty()) {
             std::cerr << "ERROR: Trying to send empty response" << std::endl;
             // Send a fallback response so client isn't waiting forever
@@ -264,26 +262,14 @@ struct SSLConnection {
         // Add a dot-terminator to signal end-of-message for SMTP-like protocols
         formatted_response += ".\r\n";
         
-        std::cout << "Raw message to send:" << std::endl;
-        for (size_t i = 0; i < formatted_response.size(); i++) {
-            char c = formatted_response[i];
-            if (c == '\r') std::cout << "<CR>";
-            else if (c == '\n') std::cout << "<LF>" << std::endl;
-            else std::cout << c;
-        }
-        std::cout << std::endl;
-        
         // Try sending the entire response at once first
         int result = SSL_write(ssl, formatted_response.c_str(), formatted_response.length());
         
         if (result > 0) {
-            std::cout << "Successfully sent entire response: " << result << " bytes" << std::endl;
             return result;
         }
         
         // If that failed, try the chunked approach
-        std::cout << "Failed to send entire response, trying chunked approach" << std::endl;
-        
         const int CHUNK_SIZE = 128; // Smaller chunks
         const char* data = formatted_response.c_str();
         int remaining = formatted_response.length();
@@ -303,13 +289,10 @@ struct SSLConnection {
             total_sent += sent;
             remaining -= sent;
             
-            std::cout << "Sent chunk: " << sent << " bytes, " << remaining << " remaining" << std::endl;
-            
-            // Larger delay between chunks
+            // Delay between chunks
             usleep(50000); // 50ms
         }
         
-        std::cout << "Successfully sent all chunks: " << total_sent << " bytes" << std::endl;
         return total_sent;
     }
 };
@@ -967,9 +950,6 @@ std::string handleRate(const std::string &username, int gameId, int ratingVal,
     rd.totalRating += ratingVal;
     userRatings[username][gameId] = ratingVal;
     
-    // Add debug logging
-    std::cout << "DEBUG: User '" << username << "' rated game ID " << gameId << " with " << ratingVal << "/10" << std::endl;
-    
     std::string gameTitle = "Unknown";
     for (auto &gm : games) {
         if (gm.id == gameId) {
@@ -1281,7 +1261,6 @@ bool load_credentials() {
     }
     
     std::string filePath = std::string(cwd) + "/.games_shadow";
-    std::cout << "Looking for credential file at: " << filePath << std::endl;
     
     // Check if file exists
     if (!std::filesystem::exists(filePath)) {
@@ -1294,28 +1273,14 @@ bool load_credentials() {
             return false;
         }
         newFile.close();
-        std::cout << "Created empty credential file" << std::endl;
         return true;  // No users to load yet
     }
     
-
-    std::cout << "Found credential file, loading..." << std::endl;
     std::ifstream file(filePath);
     if (!file.is_open()) {
         std::cerr << "ERROR: Cannot open credential file for reading: " << strerror(errno) << std::endl;
         return false;
     }
-    
-    file.seekg(0, std::ios::beg);
-    char buffer[20];
-    std::memset(buffer, 0, sizeof(buffer));
-    file.read(buffer, sizeof(buffer) - 1);
-    
-    std::cout << "DEBUG - First 20 bytes of credential file (hex): ";
-    for (int i = 0; i < 20 && buffer[i] != 0; i++) {
-        printf("%02X ", static_cast<unsigned char>(buffer[i]));
-    }
-    std::cout << std::endl;
     
     // Reset file position to beginning
     file.clear();
@@ -1328,11 +1293,8 @@ bool load_credentials() {
     while (std::getline(file, line)) {
         lineCount++;
         
-        std::cout << "Processing line " << lineCount << ": " << line << std::endl;
-        
         // Skip empty lines
         if (line.empty()) {
-            std::cerr << "Skipping empty line " << lineCount << std::endl;
             continue;
         }
         
@@ -1356,15 +1318,6 @@ bool load_credentials() {
         std::transform(username.begin(), username.end(), username.begin(), 
                       [](unsigned char c){ return std::tolower(c); });
         
-        std::cout << "User: [" << username << "], Record: [" << record << "]" << std::endl;
-        
-
-        std::cout << "DEBUG - First 10 chars of record (hex): ";
-        for (int i = 0; i < 10 && i < record.length(); i++) {
-            printf("%02X ", static_cast<unsigned char>(record[i]));
-        }
-        std::cout << std::endl;
-        
         // Create a clean version of the record
         std::string cleanRecord = record;
         while (!cleanRecord.empty() && 
@@ -1381,28 +1334,10 @@ bool load_credentials() {
         
         // Parse
         std::string expectedPrefix = "$pbkdf2-sha256$";
-        std::cout << "DEBUG: Checking record prefix. Record: [" << cleanRecord << "]" << std::endl;
-        std::cout << "DEBUG: Expected prefix: [" << expectedPrefix << "] length: " << expectedPrefix.length() << std::endl;
-        std::cout << "DEBUG: Actual prefix: [" << cleanRecord.substr(0, expectedPrefix.length()) << "] length: " << cleanRecord.substr(0, expectedPrefix.length()).length() << std::endl;
-        
-
-        bool prefixMatch = true;
-        for (size_t i = 0; i < expectedPrefix.length() && i < cleanRecord.length(); i++) {
-            if (cleanRecord[i] != expectedPrefix[i]) {
-                std::cout << "DEBUG: Mismatch at position " << i << ": expected '" 
-                          << expectedPrefix[i] << "' (ASCII: " << (int)expectedPrefix[i] 
-                          << "), got '" << cleanRecord[i] << "' (ASCII: " << (int)cleanRecord[i] << ")" << std::endl;
-                prefixMatch = false;
-            }
-        }
-        
-        if (!prefixMatch || cleanRecord.substr(0, expectedPrefix.length()) != expectedPrefix) {
+        if (cleanRecord.substr(0, expectedPrefix.length()) != expectedPrefix) {
             std::cerr << "Invalid credential format for user: " << username << std::endl;
-            std::cerr << "Expected prefix: [" << expectedPrefix << "]" << std::endl;
-            std::cerr << "Actual record starts with: [" << cleanRecord.substr(0, expectedPrefix.length()) << "]" << std::endl;
             continue;
         }
-        
         
         size_t firstDollar = cleanRecord.find('$');
         size_t secondDollar = cleanRecord.find('$', firstDollar + 1);
@@ -1439,19 +1374,10 @@ bool load_credentials() {
         cred.failedAttempts = 0;
         
         userCredentials[username] = cred;
-        std::cout << "Successfully loaded user: " << username << std::endl;
         loadedCount++;
     }
     
     file.close();
-    std::cout << "Credential loading complete. Loaded " << loadedCount << " out of " << lineCount << " entries." << std::endl;
-    
-    std::cout << "Currently loaded users: ";
-    for (const auto& [username, _] : userCredentials) {
-        std::cout << username << " ";
-    }
-    std::cout << std::endl;
-    
     return true;
 }
 
@@ -1463,13 +1389,6 @@ bool save_credentials() {
     }
     
     std::string filePath = std::string(cwd) + "/.games_shadow";
-    std::cout << "Saving credentials to: " << filePath << std::endl;
-    
-    std::cout << "Saving users: ";
-    for (const auto& [username, _] : userCredentials) {
-        std::cout << username << " ";
-    }
-    std::cout << std::endl;
     
     // Create a temporary file
     std::string tempFilePath = filePath + ".tmp";
@@ -1486,8 +1405,6 @@ bool save_credentials() {
     // Write each credential
     for (const auto& [username, cred] : userCredentials) {
         std::string line = username + ":$pbkdf2-sha256$10000$" + cred.salt + "$" + cred.hash + "\n";
-        std::cout << "Writing user: " << username << std::endl;
-        
         outFile << line;
         if (!outFile.good()) {
             std::cerr << "ERROR: Failed to write user " << username << " to file: " << strerror(errno) << std::endl;
@@ -1505,7 +1422,7 @@ bool save_credentials() {
         return false;
     }
     
-    // Rename temporary file to the actual filex
+    // Rename temporary file to the actual file
     try {
         std::filesystem::rename(tempFilePath, filePath);
     } catch (const std::exception& e) {
@@ -1513,16 +1430,12 @@ bool save_credentials() {
         return false;
     }
     
-    std::cout << "Successfully saved " << count << " credential records" << std::endl;
     return true;
 }
 
 // Handle USER
 std::string handleUser(const std::string &username, bool &authenticated, std::string &currentUser, bool &closeConnection) {
     std::lock_guard<std::mutex> lock(credentialMutex);
-    
-    std::cout << "DEBUG - handleUser called for: " << username << std::endl;
-    std::cout << "DEBUG - userCredentials size: " << userCredentials.size() << std::endl;
     
     // Convert username to lowercase
     std::string lowercaseUsername = username;
@@ -1533,12 +1446,10 @@ std::string handleUser(const std::string &username, bool &authenticated, std::st
     authenticated = false;
     closeConnection = false;
     
-    std::cout << "DEBUG - Checking if user exists in map..." << std::endl;
     auto it = userCredentials.find(lowercaseUsername);
     
     if (it != userCredentials.end()) {
         // User exists, prepare for authentication
-        std::cout << "DEBUG - FOUND: Existing user found in credentials map: " << lowercaseUsername << std::endl;
         
         // Reset failed attempts if this is a new login attempt
         it->second.failedAttempts = 0;
@@ -1813,7 +1724,7 @@ int main(int argc, char* argv[]) {
         throw std::system_error(errno, std::generic_category(), "sigaction for termination signals");
     }
 
-    std::cout << "server: waiting for connections...\n";
+    std::cout << "Server ready and waiting for connections on port " << port << std::endl;
 
     while (true) {
         sin_size = sizeof their_addr;
