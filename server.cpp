@@ -5,7 +5,7 @@
  * Updated for P3 security requirements
  * Date: 04/18/2025
  * License: MIT License
- * Description: This is a secure video game rental server using TLS 1.3 for CS447 Spring 2025 P3.
+ * Description: This is a secure video game rental server using TLS 1.3 for CS447 Spring P3.
  */
 
 #include <iostream>
@@ -25,22 +25,16 @@
 #include <cctype>
 #include <random>
 #include <stdexcept>
-
-// Network headers
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-
-// OpenSSL headers
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/bio.h>
-
-// System headers
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <signal.h>
@@ -48,7 +42,6 @@
 #include <csignal>
 #include <fcntl.h>
 
-// Server configuration
 #define BACKLOG 10
 #define MAXDATASIZE 4096
 
@@ -70,7 +63,7 @@ bool init_openssl() {
         return false;
     }
     
-    // Set TLS 1.3 as the only allowed protocol version
+    // Force TLS 1.3
     if (SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_3_VERSION) != 1 ||
         SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_3_VERSION) != 1) {
         std::cerr << "Failed to set TLS version" << std::endl;
@@ -78,7 +71,7 @@ bool init_openssl() {
         return false;
     }
     
-    // Configure the cipher suites for TLS 1.3
+    // Configure cipher suites for TLS 1.3
     if (SSL_CTX_set_ciphersuites(ssl_ctx, 
         "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256") != 1) {
         std::cerr << "Failed to set cipher suites" << std::endl;
@@ -99,7 +92,7 @@ bool init_openssl() {
         return false;
     }
     
-    // Verify private key matches the certificate
+    // Verify private key matches certificate
     if (SSL_CTX_check_private_key(ssl_ctx) != 1) {
         std::cerr << "Private key does not match the certificate" << std::endl;
         ERR_print_errors_fp(stderr);
@@ -219,7 +212,7 @@ public:
 // Data structures
 struct RentalRecord {
     int gameId;
-    std::string action; // "CHECKOUT" or "RETURN"
+    std::string action; // CHECKOUT or RETURN
     std::string timestamp;
 };
 
@@ -230,9 +223,9 @@ struct RatingData {
 
 struct UserCredential {
     std::string username;
-    std::string salt;       // Base64 encoded
-    std::string hash;       // Base64 encoded
-    int failedAttempts;     // Count of consecutive failed login attempts
+    std::string salt; 
+    std::string hash;     
+    int failedAttempts;  
 };
 
 struct Game {
@@ -249,11 +242,9 @@ struct Game {
 // Global data stores with mutex protection
 static std::unordered_map<std::string, std::vector<RentalRecord>> userRentalHistory;
 static std::mutex rentalMutex;
-
 static std::unordered_map<int, RatingData> globalRatings;
 static std::unordered_map<std::string, std::unordered_map<int,int>> userRatings;
 static std::mutex ratingMutex;
-
 static std::unordered_map<std::string, UserCredential> userCredentials;
 static std::mutex credentialMutex;
 
@@ -334,7 +325,7 @@ std::vector<Game> loadGamesFromFile(const std::string &fileName) {
     int lineNumber = 0;
     while (std::getline(file, line)) {
         lineNumber++;
-        if (lineNumber == 1) continue; // skip header
+        if (lineNumber == 1) continue;
         
         std::stringstream ss(line);
         std::string id, title, platform, genre, year, esrb, available, copies;
@@ -415,14 +406,14 @@ std::vector<unsigned char> generate_salt() {
 }
 
 std::vector<unsigned char> hash_password(const std::string& password, const std::vector<unsigned char>& salt) {
-    std::vector<unsigned char> hash(32); // SHA-256 output is 32 bytes
+    std::vector<unsigned char> hash(32);
     
     if (PKCS5_PBKDF2_HMAC(
             password.c_str(), 
             password.length(),
             salt.data(), 
             salt.size(),
-            10000,  // 10,000 iterations as required
+            10000,
             EVP_sha256(),
             hash.size(), 
             hash.data()) != 1) {
@@ -459,7 +450,7 @@ bool load_credentials() {
             return false;
         }
         newFile.close();
-        return true;  // No users to load yet
+        return true;
     }
     
     std::ifstream file(filePath);
@@ -494,7 +485,6 @@ bool load_credentials() {
         std::transform(username.begin(), username.end(), username.begin(), 
                       [](unsigned char c){ return std::tolower(c); });
         
-        // Ensure record is valid PBKDF2 format
         if (record.find("$pbkdf2-sha256$") != 0) {
             std::cerr << "Invalid credential format for user: " << username << std::endl;
             continue;
@@ -662,7 +652,7 @@ std::string handleList(const std::vector<Game> &games, const std::string &filter
         return resp.str();
     }
     
-    // If filter is "title","platform","genre"
+    // If filter is title,platform,genre
     if (filterType == "title" || filterType == "platform" || filterType == "genre") {
         std::unordered_map<std::string,int> seen;
         for (auto &g : games) {
@@ -1505,7 +1495,7 @@ int main(int argc, char* argv[]) {
                     buffer[bytes] = '\0';
                     std::string command(buffer.data());
                     
-                    // Clean up command (remove trailing newlines)
+                    // Clean up command
                     if (!command.empty() && (command.back() == '\n' || command.back() == '\r')) {
                         command.pop_back();
                     }
@@ -1540,11 +1530,9 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Exception in client thread: " << e.what() << std::endl;
             }
             
-            // Connection cleanup handled by SSLConnection destructor
         }).detach();
     }
     
-    // Clean up (though we should never get here due to signal handlers)
     cleanup_openssl();
     return 0;
 }
