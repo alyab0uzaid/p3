@@ -2,6 +2,8 @@ CXX = g++
 CXXFLAGS = -std=c++20 -Wall
 # OpenSSL flags for Apple Silicon Mac with Homebrew
 OPENSSL_FLAGS = -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib -lssl -lcrypto
+# Add ncurses flags
+NCURSES_FLAGS = -lncurses
 
 all: server
 
@@ -15,5 +17,8 @@ client: client.cpp
 test_client: test_client.cpp
 	    $(CXX) $(CXXFLAGS) -o test_client test_client.cpp $(OPENSSL_FLAGS)
 
+tui_client: tui_client.cpp
+	    $(CXX) $(CXXFLAGS) -o tui_client tui_client.cpp $(OPENSSL_FLAGS) $(NCURSES_FLAGS)
+
 clean:
-	    rm -f server client
+	    rm -f server client test_client tui_client
