@@ -5,7 +5,7 @@ OPENSSL_FLAGS = -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/
 # Add ncurses flags
 NCURSES_FLAGS = -lncurses
 
-all: server
+all: server tui_client
 
 server: server.cpp
 	    $(CXX) $(CXXFLAGS) -o server server.cpp $(OPENSSL_FLAGS)

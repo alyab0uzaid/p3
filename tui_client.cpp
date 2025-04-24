@@ -408,7 +408,6 @@ void show_login_screen() {
         size_t pos = response.find("Your password is: ");
         if (pos != std::string::npos) {
             std::string password = response.substr(pos + 18);
-            show_message("Your account has been created with password: " + password);
             show_message("Please remember this password for future logins.");
             show_message("The connection will now close. Please restart the client to login.");
             
@@ -850,7 +849,6 @@ void show_main_menu() {
             "BROWSE - Browse the game catalog",
             "RENT - Checkout or return games",
             "MYGAMES - View history and recommendations",
-            "HELP - Show command help",
             "Logout and exit"
         };
         
@@ -883,21 +881,6 @@ void show_main_menu() {
                 handle_my_games_mode();
                 break;
                 
-            case 3: {
-                // HELP
-                std::string response;
-                if (!send_command("HELP", response)) {
-                    show_message("Error sending HELP command");
-                    continue;
-                }
-                
-                werase(output_win);
-                show_message(response);
-                mvwprintw(input_win, 1, 1, "Press any key to continue...");
-                wrefresh(input_win);
-                wgetch(input_win);
-                break;
-            }
                 
             default:
                 running = false; // User pressed F1 or some other key
