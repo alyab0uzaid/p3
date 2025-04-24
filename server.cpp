@@ -1017,7 +1017,7 @@ std::string handleCommand(const std::string &command,
     
     // Empty command
     if (command.empty()) {
-        return "501 Invalid command";
+        return "400 BAD REQUEST - Empty command";
     }
     
     // Log the command
@@ -1032,9 +1032,9 @@ std::string handleCommand(const std::string &command,
         return handlePass(command.substr(5), authenticated, currentUser, browseMode, rentMode, myGamesMode, closeConnection);
     }
     
-    // All other commands require authentication
-    if (!authenticated) {
-        return "530 Not authenticated. Please login first with USER and PASS.";
+    // For all other commands, authentication is required (except HELP)
+    if (!authenticated && command != "HELP") {
+        return "403 FORBIDDEN - Not authenticated. Please login first with USER and PASS.";
     }
     
     //HELP
@@ -1062,6 +1062,51 @@ std::string handleCommand(const std::string &command,
         myGamesMode = true;
         return "230 Switched to MyGames Mode";
     }
+    
+    // Check for mode-specific commands when not in any mode
+    if (!browseMode && !rentMode && !myGamesMode) {
+        if (command.rfind("LIST", 0) == 0 || command.rfind("SEARCH", 0) == 0 || command.rfind("SHOW", 0) == 0) {
+            return "503 Bad sequence of commands. Must enter BROWSE mode first.";
+        }
+        if (command.rfind("CHECKOUT", 0) == 0 || command.rfind("RETURN", 0) == 0) {
+            return "503 Bad sequence of commands. Must enter RENT mode first.";
+        }
+        if (command.rfind("HISTORY", 0) == 0 || command.rfind("RECOMMEND", 0) == 0 || 
+            command.rfind("RATE", 0) == 0 || command.rfind("RATING", 0) == 0) {
+            return "503 Bad sequence of commands. Must enter MYGAMES mode first.";
+        }
+    }
+    
+    // Check for commands used in the wrong mode
+    if (browseMode) {
+        if (command.rfind("CHECKOUT", 0) == 0 || command.rfind("RETURN", 0) == 0) {
+            return "503 Bad sequence of commands. Must enter RENT mode for this command.";
+        }
+        if (command.rfind("HISTORY", 0) == 0 || command.rfind("RECOMMEND", 0) == 0 || 
+            command.rfind("RATE", 0) == 0 || command.rfind("RATING", 0) == 0) {
+            return "503 Bad sequence of commands. Must enter MYGAMES mode for this command.";
+        }
+    }
+    
+    if (rentMode) {
+        if (command.rfind("LIST", 0) == 0 || command.rfind("SEARCH", 0) == 0 || command.rfind("SHOW", 0) == 0) {
+            return "503 Bad sequence of commands. Must enter BROWSE mode for this command.";
+        }
+        if (command.rfind("HISTORY", 0) == 0 || command.rfind("RECOMMEND", 0) == 0 || 
+            command.rfind("RATE", 0) == 0 || command.rfind("RATING", 0) == 0) {
+            return "503 Bad sequence of commands. Must enter MYGAMES mode for this command.";
+        }
+    }
+    
+    if (myGamesMode) {
+        if (command.rfind("LIST", 0) == 0 || command.rfind("SEARCH", 0) == 0 || command.rfind("SHOW", 0) == 0) {
+            return "503 Bad sequence of commands. Must enter BROWSE mode for this command.";
+        }
+        if (command.rfind("CHECKOUT", 0) == 0 || command.rfind("RETURN", 0) == 0) {
+            return "503 Bad sequence of commands. Must enter RENT mode for this command.";
+        }
+    }
+    
     // BROWSE commands
     if (browseMode) {
         if (command.rfind("LIST", 0) == 0) {
