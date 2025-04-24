@@ -1573,8 +1573,8 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
             if (hash_b64 == cred.hash) {
                 authenticated = true;
                 cred.failedAttempts = 0;
-                // Default to browse mode for existing users too
-                browseMode = true;
+                // Set all modes to false to start in main menu
+                browseMode = false;
                 rentMode = false;
                 myGamesMode = false;
                 std::cout << "DEBUG - Authentication successful for user: " << currentUser << std::endl;
@@ -1649,9 +1649,9 @@ std::string handlePass(const std::string &password, bool &authenticated, std::st
                 std::cout << "DEBUG - Map now contains " << userCredentials.size() << " users" << std::endl;
             }
             
-            // Set the user as authenticated and enable browse mode by default
+            // Set the user as authenticated and start with no mode active (main menu)
             authenticated = true;
-            browseMode = true;
+            browseMode = false;
             rentMode = false;
             myGamesMode = false;
             
@@ -1883,13 +1883,9 @@ int main(int argc, char* argv[]) {
                     // Clean up received command by removing any trailing whitespace/newlines
                     std::string received(buf.data());
                     
-                    // Trim trailing whitespace, CR, LF
-                    size_t endPos = received.find_last_not_of(" \r\n\t");
-                    if (endPos != std::string::npos) {
-                        received = received.substr(0, endPos + 1);
-                    } else if (received.find_first_not_of(" \r\n\t") == std::string::npos) {
-                        // String is all whitespace
-                        received = "";
+                    // Remove trailing newline if it exists
+                    if (!received.empty() && received.back() == '\n') {
+                        received.pop_back();
                     }
                     
                     std::cout << "Raw input: '" << buf.data() << "'" << std::endl;
@@ -1908,12 +1904,12 @@ int main(int argc, char* argv[]) {
                     std::cout << response << std::endl;
                     std::cout << "---END RESPONSE---" << std::endl;
                     
-                    // Simple response format with just a CRLF trailer
-                    std::string minimal_response = response + "\r\n";
+                    // Add a newline to the response
+                    std::string minimal_response = response + "\n";
                     
                     // Log what we're sending
                     std::cout << "Sending response (length: " << minimal_response.length() << "): \"" 
-                              << response << "\\r\\n\"" << std::endl;
+                              << response << "\\n\"" << std::endl;
                     
                     // Direct SSL_write with minimal formatting
                     int direct_result = SSL_write(ssl_conn.ssl, minimal_response.c_str(), minimal_response.length());
